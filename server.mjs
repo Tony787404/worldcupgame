@@ -16,8 +16,12 @@ const OWNERSHIP_FILE = process.env.OWNERSHIP_FILE
   ? path.resolve(process.env.OWNERSHIP_FILE)
   : path.join(DATA_DIR, "ownership.json");
 
-const SPORTMONKS_LEAGUE_ID = process.env.SPORTMONKS_WORLD_CUP_LEAGUE_ID || "732";
-const LIVE_REFRESH_MS = Number(process.env.LIVE_REFRESH_MS || 60000);
+const API_FOOTBALL_BASE_URL = process.env.API_FOOTBALL_BASE_URL || "https://v3.football.api-sports.io";
+const API_FOOTBALL_LEAGUE_ID = process.env.API_FOOTBALL_LEAGUE_ID || "1";
+const API_FOOTBALL_SEASON = process.env.API_FOOTBALL_SEASON || "2026";
+const AUTO_SYNC_MS = Number(process.env.AUTO_SYNC_MS || 4 * 60 * 60 * 1000);
+const MIN_SYNC_INTERVAL_MS = Number(process.env.MIN_SYNC_INTERVAL_MS || 60 * 60 * 1000);
+const API_FOOTBALL_DAILY_REQUEST_LIMIT = Number(process.env.API_FOOTBALL_DAILY_REQUEST_LIMIT || 90);
 let syncTimer = null;
 
 async function readJson(file) {
@@ -67,89 +71,176 @@ function contentType(file) {
   return "application/octet-stream";
 }
 
-function normaliseSportmonksFixture(fixture) {
-  const participants = fixture.participants || [];
-  const home = participants.find((team) => team.meta?.location === "home") || participants[0] || {};
-  const away = participants.find((team) => team.meta?.location === "away") || participants[1] || {};
-  const scores = fixture.scores || [];
-  const scoreFor = (teamId) => {
-    const current = scores.find((score) => score.participant_id === teamId && /current|2nd-half|final/i.test(score.description || ""));
-    return current?.score?.goals ?? current?.score?.participant ?? null;
-  };
+function normaliseApiFootballFixture(item) {
+  const fixture = item.fixture || {};
+  const teams = item.teams || {};
+  const goals = item.goals || {};
+  const status = fixture.status || {};
 
   return {
     id: String(fixture.id),
-    kickoff: fixture.starting_at ? new Date(fixture.starting_at).toISOString() : null,
-    status: mapSportmonksState(fixture.state?.name || fixture.state?.short_name),
-    minute: fixture.periods?.at(-1)?.minutes || fixture.time?.minute || 0,
-    homeTeam: home.name,
-    awayTeam: away.name,
-    homeScore: scoreFor(home.id),
-    awayScore: scoreFor(away.id),
-    events: (fixture.events || []).map((event) => ({
-      id: String(event.id),
-      minute: event.minute || event.extra_minute || 0,
-      type: mapSportmonksEvent(event.type?.name || event.type?.code || event.type_id),
-      team: event.participant?.name || event.team_name || null,
-      player: event.player_name || event.player?.display_name || event.player?.name || null,
-      assist: event.related_player_name || event.relatedplayer?.display_name || null
+    kickoff: fixture.date ? new Date(fixture.date).toISOString() : null,
+    status: mapApiFootballState(status.short || status.long),
+    minute: status.elapsed || 0,
+    homeTeam: teams.home?.name,
+    awayTeam: teams.away?.name,
+    homeScore: Number.isFinite(goals.home) ? goals.home : null,
+    awayScore: Number.isFinite(goals.away) ? goals.away : null,
+    events: (item.events || []).map((event, index) => ({
+      id: String(event.id || `${fixture.id}-${event.time?.elapsed || 0}-${event.team?.id || "team"}-${event.player?.id || index}-${event.type || "event"}`),
+      minute: event.time?.elapsed || event.time?.extra || 0,
+      type: mapApiFootballEvent(event.type, event.detail),
+      team: event.team?.name || null,
+      player: event.player?.name || null,
+      assist: event.assist?.name || null
     })),
-    lineups: (fixture.lineups || []).map((lineup) => ({
-      player: lineup.player_name || lineup.player?.display_name || lineup.player?.name,
-      team: lineup.team_name || lineup.participant?.name,
-      position: lineup.position?.name || lineup.formation_position || "Player"
-    }))
+    lineups: (item.lineups || []).flatMap((lineup) => {
+      const team = lineup.team?.name;
+      return (lineup.startXI || []).map((entry) => ({
+        player: entry.player?.name,
+        team,
+        position: entry.player?.pos || "Player"
+      }));
+    }),
+    playerStats: (item.players || []).flatMap((team) => (team.players || []).map((entry) => ({
+      player: entry.player?.name,
+      team: team.team?.name,
+      statistics: entry.statistics || []
+    })))
   };
 }
 
-function mapSportmonksState(state = "") {
+function mapApiFootballState(state = "") {
   const key = String(state).toLowerCase();
-  if (key.includes("finished") || key.includes("ended") || key === "ft") return "completed";
-  if (key.includes("live") || key.includes("half") || key === "1st" || key === "2nd") return "live";
+  if (["ft", "aet", "pen"].includes(key) || key.includes("match finished")) return "completed";
+  if (["1h", "2h", "ht", "et", "bt", "p", "int", "live"].includes(key) || key.includes("in play")) return "live";
   return "scheduled";
 }
 
-function mapSportmonksEvent(type = "") {
-  const key = String(type).toLowerCase();
-  if (key.includes("yellow")) return "yellow_card";
-  if (key.includes("red")) return "red_card";
-  if (key.includes("goal")) return "goal";
-  return key.replaceAll(" ", "_") || "event";
+function mapApiFootballEvent(type = "", detail = "") {
+  const typeKey = String(type).toLowerCase();
+  const detailKey = String(detail).toLowerCase();
+  const key = `${typeKey} ${detailKey}`;
+  if (key.includes("yellow card")) return "yellow_card";
+  if (key.includes("red card")) return "red_card";
+  if (typeKey.includes("goal") && !/disallowed|cancelled|missed/.test(detailKey)) return "goal";
+  return String(type || detail || "event").toLowerCase().replaceAll(" ", "_");
 }
 
-async function fetchSportmonksMatches() {
-  const token = process.env.SPORTMONKS_API_TOKEN;
+function hasApiFootballErrors(errors) {
+  if (!errors) return false;
+  if (Array.isArray(errors)) return errors.length > 0;
+  if (typeof errors === "object") return Object.keys(errors).length > 0;
+  return Boolean(errors);
+}
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function syncMeta(cache) {
+  return cache.sync || { date: todayKey(), requests: 0, lastAttemptAt: null, lastSuccessAt: cache.fetchedAt || null };
+}
+
+function resetDailySyncMeta(meta) {
+  const key = todayKey();
+  return meta.date === key ? meta : { ...meta, date: key, requests: 0 };
+}
+
+async function writeSyncMetadata(patch) {
+  const latest = await readJson(CACHE_FILE);
+  const sync = { ...resetDailySyncMeta(syncMeta(latest)), ...patch };
+  const next = { ...latest, sync };
+  await writeJson(CACHE_FILE, next);
+  return next;
+}
+
+function shouldSkipProviderSync(cache, force = false) {
+  const sync = resetDailySyncMeta(syncMeta(cache));
+  const lastSuccess = new Date(sync.lastSuccessAt || cache.fetchedAt || 0).getTime();
+  const minInterval = force ? MIN_SYNC_INTERVAL_MS : AUTO_SYNC_MS;
+  const freshEnough = Number.isFinite(lastSuccess) && Date.now() - lastSuccess < minInterval;
+  if (freshEnough) {
+    return { skip: true, reason: "cooldown", sync };
+  }
+  if (sync.requests >= API_FOOTBALL_DAILY_REQUEST_LIMIT) {
+    return { skip: true, reason: "daily_limit", sync };
+  }
+  return { skip: false, sync };
+}
+
+async function fetchApiFootballMatches(sync) {
+  const token = process.env.API_FOOTBALL_KEY;
   if (!token) return null;
 
-  const include = "scores;participants;events;lineups;state;periods";
-  const urls = [
-    `https://api.sportmonks.com/v3/football/livescores/inplay?api_token=${token}&filters=fixtureLeagues:${SPORTMONKS_LEAGUE_ID}&include=${include}`,
-    `https://api.sportmonks.com/v3/football/fixtures?api_token=${token}&filters=fixtureLeagues:${SPORTMONKS_LEAGUE_ID}&include=${include}`
-  ];
+  const url = new URL("/fixtures", API_FOOTBALL_BASE_URL);
+  url.search = new URLSearchParams({
+    league: API_FOOTBALL_LEAGUE_ID,
+    season: API_FOOTBALL_SEASON,
+    timezone: "UTC"
+  }).toString();
 
-  const allFixtures = [];
-  for (const url of urls) {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Sportmonks ${response.status}: ${await response.text()}`);
-    const payload = await response.json();
-    allFixtures.push(...(payload.data || []));
+  const response = await fetch(url, { headers: { "x-apisports-key": token } });
+  const nextRequests = sync.requests + 1;
+  if (!response.ok) {
+    await writeSyncMetadata({
+      date: sync.date,
+      requests: nextRequests,
+      lastAttemptAt: new Date().toISOString(),
+      lastError: `API-Football ${response.status}: ${await response.text()}`
+    });
+    throw new Error(`API-Football ${response.status}`);
   }
 
-  const byId = new Map(allFixtures.map((fixture) => [fixture.id, normaliseSportmonksFixture(fixture)]));
+  const payload = await response.json();
+  if (hasApiFootballErrors(payload.errors)) {
+    await writeSyncMetadata({
+      date: sync.date,
+      requests: nextRequests,
+      lastAttemptAt: new Date().toISOString(),
+      lastError: `API-Football errors: ${JSON.stringify(payload.errors).slice(0, 300)}`
+    });
+    throw new Error("API-Football returned errors");
+  }
+
+  const matches = (payload.response || []).map(normaliseApiFootballFixture);
   return {
-    provider: "sportmonks",
+    provider: "api-football",
     fetchedAt: new Date().toISOString(),
-    matches: [...byId.values()].sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff))
+    sync: {
+      date: sync.date,
+      requests: nextRequests,
+      requestLimit: API_FOOTBALL_DAILY_REQUEST_LIMIT,
+      lastAttemptAt: new Date().toISOString(),
+      lastSuccessAt: new Date().toISOString(),
+      nextAutoSyncAt: new Date(Date.now() + AUTO_SYNC_MS).toISOString(),
+      minSyncIntervalMs: MIN_SYNC_INTERVAL_MS
+    },
+    matches: matches.sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff))
   };
+}
+
+async function readMatchCache() {
+  return readJson(CACHE_FILE);
 }
 
 async function syncMatches(force = false) {
   const cached = await readJson(CACHE_FILE);
-  const freshEnough = Date.now() - new Date(cached.fetchedAt).getTime() < LIVE_REFRESH_MS;
-  const hasLive = cached.matches.some((match) => match.status === "live");
-  if (!force && freshEnough && !hasLive) return cached;
+  const decision = shouldSkipProviderSync(cached, force);
+  if (decision.skip) {
+    return {
+      ...cached,
+      sync: {
+        ...decision.sync,
+        requestLimit: API_FOOTBALL_DAILY_REQUEST_LIMIT,
+        skipped: decision.reason,
+        nextAutoSyncAt: new Date((new Date(decision.sync.lastSuccessAt || cached.fetchedAt || 0).getTime() || Date.now()) + AUTO_SYNC_MS).toISOString(),
+        minSyncIntervalMs: MIN_SYNC_INTERVAL_MS
+      }
+    };
+  }
 
-  const fetched = await fetchSportmonksMatches();
+  const fetched = await fetchApiFootballMatches(decision.sync);
   if (!fetched) return cached;
   await writeJson(CACHE_FILE, fetched);
   return fetched;
@@ -165,7 +256,7 @@ async function handler(req, res) {
   try {
     if (url.pathname === "/healthz") return json(res, { ok: true, uptime: process.uptime() });
     if (url.pathname === "/api/ownership") return json(res, await readJson(OWNERSHIP_FILE));
-    if (url.pathname === "/api/matches") return json(res, await syncMatches(false));
+    if (url.pathname === "/api/matches") return json(res, await readMatchCache());
     if (url.pathname === "/api/sync") return json(res, await syncMatches(true));
     if (url.pathname === "/api/player-images") {
       const ownership = await readJson(OWNERSHIP_FILE);
@@ -191,9 +282,9 @@ async function handler(req, res) {
     }
     if (url.pathname === "/api/recommendation") {
       return json(res, {
-        recommended: "Sportmonks World Cup 2026 API",
-        reason: "Best fit for this family app: dedicated 2026 World Cup coverage, live scores, in-game events, squads/player data, standings and brackets, clear documentation, and a low-cost tournament plan compared with enterprise feeds.",
-        tradeOffs: "Free APIs are usually acceptable for fixtures/results but weak for assists, cards, player positions, squad data, and near-live reliability. Sportmonks is paid, but avoids manual score entry and gives the event detail required for recalculable fantasy scoring."
+        recommended: "API-Football with scheduled cache",
+        reason: "Best fit for this family app: one cached provider request can refresh World Cup fixtures, scores, events, lineups, and player statistics periodically while users read cached JSON.",
+        tradeOffs: "The default cache cadence is intentionally conservative to stay under 100 API requests/day. Users can press Sync for a manual refresh, but repeated syncs are rate-limited server-side."
       });
     }
 
@@ -214,17 +305,19 @@ await ensureRuntimeData();
 http.createServer(handler).listen(PORT, HOST, () => {
   console.log(`World Cup Family Cards running at http://${HOST}:${PORT}`);
   console.log(`Using data directory: ${DATA_DIR}`);
-  console.log("Set SPORTMONKS_API_TOKEN to enable live World Cup syncing.");
+  console.log("Set API_FOOTBALL_KEY to enable scheduled API-Football cache refreshes.");
 });
 
-syncTimer = setInterval(async () => {
+async function runScheduledSync() {
   try {
-    const cache = await readJson(CACHE_FILE);
-    if (cache.matches.some((match) => match.status === "live")) await syncMatches(true);
+    await syncMatches(false);
   } catch (error) {
     console.warn(`Scheduled sync skipped: ${error.message}`);
   }
-}, LIVE_REFRESH_MS);
+}
+
+runScheduledSync();
+syncTimer = setInterval(runScheduledSync, AUTO_SYNC_MS);
 
 process.on("SIGINT", () => {
   clearInterval(syncTimer);

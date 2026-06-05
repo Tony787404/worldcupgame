@@ -40,18 +40,21 @@ NODE_ENV=production
 Recommended:
 
 ```text
-LIVE_REFRESH_MS=60000
-SPORTMONKS_WORLD_CUP_LEAGUE_ID=732
+AUTO_SYNC_MS=14400000
+MIN_SYNC_INTERVAL_MS=3600000
+API_FOOTBALL_DAILY_REQUEST_LIMIT=90
+API_FOOTBALL_LEAGUE_ID=1
+API_FOOTBALL_SEASON=2026
 ```
 
 Secrets to set in Render:
 
 ```text
-SPORTMONKS_API_TOKEN=...
+API_FOOTBALL_KEY=...
 THESPORTSDB_API_KEY=...
 ```
 
-`SPORTMONKS_API_TOKEN` enables live World Cup data syncing. Without it, the app uses cached/sample match data.
+`API_FOOTBALL_KEY` enables scheduled API-Football cache refreshes. Without it, the app uses cached/sample match data.
 
 `THESPORTSDB_API_KEY` is optional. If omitted, the image enrichment script uses TheSportsDB's public test key where available.
 
