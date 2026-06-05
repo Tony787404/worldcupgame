@@ -1,0 +1,1 @@
+# This is a Node.js app. No Python packages are required for Render deployment.

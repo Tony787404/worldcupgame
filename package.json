@@ -1,0 +1,17 @@
+{
+  "name": "world-cup-family-cards",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Family fantasy football trading card game for FIFA World Cup 2026 cards.",
+  "type": "module",
+  "engines": {
+    "node": ">=20 <25"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check public/app.js && node --check lib/player-images.mjs",
+    "seed:images": "node scripts/enrich-player-images.mjs --init-only",
+    "enrich:images": "node scripts/enrich-player-images.mjs --limit=20 --strategy=sportsdb-only"
+  },
+  "dependencies": {}
+}

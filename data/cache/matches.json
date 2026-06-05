@@ -1,0 +1,58 @@
+{
+  "provider": "sample",
+  "fetchedAt": "2026-06-05T00:00:00.000Z",
+  "matches": [
+    {
+      "id": "m-eng-bra",
+      "kickoff": "2026-06-11T19:00:00.000Z",
+      "status": "completed",
+      "minute": 90,
+      "homeTeam": "England",
+      "awayTeam": "Brazil",
+      "homeScore": 2,
+      "awayScore": 0,
+      "events": [
+        { "id": "e1", "minute": 18, "type": "goal", "team": "England", "player": "Marcus Rashford", "assist": "Phil Foden" },
+        { "id": "e2", "minute": 63, "type": "yellow_card", "team": "England", "player": "Reece James" },
+        { "id": "e3", "minute": 77, "type": "goal", "team": "England", "player": "Marcus Rashford", "assist": null }
+      ],
+      "lineups": [
+        { "player": "Marcus Rashford", "team": "England", "position": "Forward" },
+        { "player": "Phil Foden", "team": "England", "position": "Midfielder" },
+        { "player": "Reece James", "team": "England", "position": "Defender" },
+        { "player": "Alisson", "team": "Brazil", "position": "Goalkeeper" },
+        { "player": "Matheus Cunha", "team": "Brazil", "position": "Forward" }
+      ]
+    },
+    {
+      "id": "m-fra-arg",
+      "kickoff": "2026-06-12T21:00:00.000Z",
+      "status": "live",
+      "minute": 54,
+      "homeTeam": "France",
+      "awayTeam": "Argentina",
+      "homeScore": 1,
+      "awayScore": 1,
+      "events": [
+        { "id": "e4", "minute": 9, "type": "goal", "team": "France", "player": "Kylian Mbappe", "assist": null },
+        { "id": "e5", "minute": 39, "type": "goal", "team": "Argentina", "player": "Lionel Messi", "assist": null }
+      ],
+      "lineups": [
+        { "player": "Kylian Mbappe", "team": "France", "position": "Forward" },
+        { "player": "Lionel Messi", "team": "Argentina", "position": "Forward" }
+      ]
+    },
+    {
+      "id": "m-eng-fra",
+      "kickoff": "2026-06-16T20:00:00.000Z",
+      "status": "scheduled",
+      "minute": 0,
+      "homeTeam": "England",
+      "awayTeam": "France",
+      "homeScore": null,
+      "awayScore": null,
+      "events": [],
+      "lineups": []
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>World Cup Family Cards</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">FIFA World Cup 2026</p>
+        <h1>Family Fantasy Cards</h1>
+      </div>
+      <div class="sync-panel">
+        <span id="providerBadge">Local cache</span>
+        <button id="syncButton" type="button">Sync</button>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="Core screens">
+      <button class="active" data-view="home">Home</button>
+      <button data-view="dashboard">Leaderboard</button>
+      <button data-view="collections">Collections</button>
+      <button data-view="matches">Match Centre</button>
+      <button data-view="stats">Stats</button>
+      <button data-view="records">Records</button>
+      <button data-view="images">Images</button>
+      <button data-view="architecture">Build Plan</button>
+    </nav>
+
+    <main>
+      <section id="home" class="view active"></section>
+      <section id="dashboard" class="view"></section>
+      <section id="collections" class="view"></section>
+      <section id="matches" class="view"></section>
+      <section id="stats" class="view"></section>
+      <section id="records" class="view"></section>
+      <section id="images" class="view"></section>
+      <section id="architecture" class="view"></section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
