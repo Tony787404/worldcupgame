@@ -26,15 +26,17 @@ See [RENDER_DEPLOYMENT.md](./RENDER_DEPLOYMENT.md) for the full deployment guide
 
 ## Live data
 
-Recommended provider: Sportmonks World Cup 2026 API.
+Recommended provider: API-Football through the server-side scheduled cache.
 
-Set the API token before starting the server:
+Set the API key before starting the server:
 
 ```sh
-SPORTMONKS_API_TOKEN=your_token_here node server.mjs
+API_FOOTBALL_KEY=your_key_here node server.mjs
 ```
 
-The app fetches World Cup fixtures/livescores/events server-side, normalizes them, and writes the result to `data/cache/matches.json`. If no token is set, it uses the cached sample data so the app remains usable.
+The app serves `data/cache/matches.json` to users. The background timer and the Sync button refresh API-Football data server-side, normalize the fixtures/events/lineups/player-stat payload, and write the result back to the cache. If no key is set, the app uses the cached sample data so the app remains usable.
+
+Cost-control defaults are intentionally conservative for the free tier: `AUTO_SYNC_MS` defaults to 4 hours, `MIN_SYNC_INTERVAL_MS` defaults to 1 hour for manual sync cooldowns, and `API_FOOTBALL_DAILY_REQUEST_LIMIT` defaults to 90 so the app stays below 100 API requests/day.
 
 ## Player images
 
@@ -132,6 +134,6 @@ For the real tournament version, use the same domain model with:
 
 - Next.js or this Node server
 - SQLite for a single-family deployment, or Supabase Postgres for hosted persistence
-- Sportmonks World Cup 2026 API
-- Scheduled sync every 30-60 seconds during live matches, hourly otherwise
+- API-Football World Cup fixture cache
+- Scheduled sync every 4 hours by default, manual Sync with a 1-hour cooldown, and a 90-request/day cap
 - Event ledger scoring so the whole tournament can be recalculated after rule changes

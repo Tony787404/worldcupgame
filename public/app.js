@@ -16,6 +16,7 @@ const state = {
   playerImages: [],
   provider: "local",
   fetchedAt: null,
+  sync: null,
   currentMember: null,
   sortCards: "points",
   collectionView: "cards",
@@ -50,6 +51,7 @@ async function loadData(sync = false) {
   state.matches = matches.matches;
   state.provider = matches.provider;
   state.fetchedAt = matches.fetchedAt;
+  state.sync = matches.sync || null;
   render();
 }
 
@@ -225,7 +227,8 @@ function scoreTournament() {
 
 function render() {
   const scored = scoreTournament();
-  document.querySelector("#providerBadge").textContent = `${state.provider || "local"} cache ${state.fetchedAt ? "• " + new Date(state.fetchedAt).toLocaleTimeString() : ""}`;
+  const requestBudget = state.sync?.requestLimit ? ` • ${state.sync.requests || 0}/${state.sync.requestLimit} API req today` : "";
+  document.querySelector("#providerBadge").textContent = `${state.provider || "local"} cache ${state.fetchedAt ? "• " + new Date(state.fetchedAt).toLocaleTimeString() : ""}${requestBudget}`;
   renderHome(scored);
   renderDashboard(scored);
   renderCollections(scored);
@@ -724,12 +727,12 @@ function renderArchitecture() {
       <ul class="two-col">
         <li><strong>Framework:</strong> dependency-free Node server plus vanilla frontend for this prototype; production can move to Next.js on Vercel or Render with the same scoring model.</li>
         <li><strong>Database:</strong> SQLite or Supabase Postgres. Store owners, cards, matches, raw provider payloads, normalized events, scoring rules, scoring ledger, achievements, and weekly awards.</li>
-        <li><strong>Football API:</strong> Sportmonks World Cup 2026 API. It covers fixtures, livescores, in-game events, squads, player details, positions, stats, standings, and brackets. The documented World Cup league filter is <code>fixtureLeagues:732</code>.</li>
-        <li><strong>Trade-off:</strong> free APIs can cover fixtures/results, but are usually thin on assists, cards, player positions, live event reliability, and tournament squad data. Sportmonks is paid, but practical and low-maintenance.</li>
+        <li><strong>Football API:</strong> API-Football via one scheduled cache request to <code>/fixtures</code> for the World Cup league/season. It can carry fixtures, scores, events, lineups, and player statistics in a provider payload that the server normalizes before writing the cache.</li>
+        <li><strong>Cost control:</strong> users read cached JSON from <code>/api/matches</code>. The Sync button and background timer share a server-side cooldown and daily request cap so the deployment stays under 100 API-Football requests/day.</li>
         <li><strong>Import plan:</strong> place the attached JSON at <code>data/ownership.json</code>, or set <code>OWNERSHIP_FILE=/path/to/file.json</code>. Normalize family members and cards once, then manage ownership in-app later.</li>
-        <li><strong>Live sync:</strong> fetch on app load, cache to <code>data/cache/matches.json</code>, and refresh every <code>LIVE_REFRESH_MS</code> while live matches exist.</li>
+        <li><strong>Cached sync:</strong> app loads serve <code>data/cache/matches.json</code>; <code>/api/sync</code> and the scheduled timer refresh that file only when cooldown and daily-budget checks pass.</li>
         <li><strong>Scoring engine:</strong> convert raw match data into normalized events, generate an append-only fantasy ledger, and derive totals from that ledger so rules can be changed and recalculated.</li>
-        <li><strong>Deployment:</strong> Render/Fly/Hetzner for the server, or Vercel plus Supabase and scheduled cron. Keep the API token server-side.</li>
+        <li><strong>Deployment:</strong> Render/Fly/Hetzner for the server, or Vercel plus Supabase and scheduled cron. Keep the API key server-side.</li>
       </ul>
       <h2>Database schema</h2>
       <table class="table">
@@ -750,10 +753,10 @@ function renderArchitecture() {
       <h2>MVP implementation plan</h2>
       <ol>
         <li>Import ownership JSON and validate card names, teams, positions, and owners.</li>
-        <li>Enable Sportmonks token and verify World Cup fixture/event mapping.</li>
+        <li>Enable <code>API_FOOTBALL_KEY</code> and verify World Cup fixture/event/lineup mapping.</li>
         <li>Persist normalized events and scoring ledger in SQLite or Supabase.</li>
         <li>Add admin-only ownership edits and card search.</li>
-        <li>Run scheduled sync during match windows and nightly recalculation.</li>
+        <li>Run scheduled cache refreshes with the 90-request/day budget and nightly recalculation.</li>
       </ol>
       <h2>Future roadmap</h2>
       <p>Add child-friendly card art, notification pings, in-app trades, private login, finals bracket view, player photos, team filters, historical rule versions, and shareable weekly recap images.</p>
