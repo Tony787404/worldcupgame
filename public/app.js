@@ -225,10 +225,23 @@ function scoreTournament() {
   return { cards, owners: ownerScores, leaderboard, events: events.sort((a, b) => b.minute - a.minute) };
 }
 
+function syncStatusText() {
+  const parts = [`${state.provider || "local"} cache`];
+  if (state.fetchedAt) parts.push(new Date(state.fetchedAt).toLocaleTimeString());
+  if (state.sync?.requestLimit) parts.push(`${state.sync.requests || 0}/${state.sync.requestLimit} sync calls today`);
+  if (state.sync?.skipped === "cooldown") parts.push("cooldown active");
+  if (state.sync?.skipped === "daily_limit") parts.push("daily limit reached");
+  if (state.sync?.skipped === "no_provider_configured") parts.push("provider not configured");
+  if (state.sync?.skipped === "error") parts.push("last sync failed");
+  if (state.sync?.lastError) parts.push(state.sync.lastError);
+  return parts.join(" • ");
+}
+
 function render() {
   const scored = scoreTournament();
-  const requestBudget = state.sync?.requestLimit ? ` • ${state.sync.requests || 0}/${state.sync.requestLimit} sync calls today` : "";
-  document.querySelector("#providerBadge").textContent = `${state.provider || "local"} cache ${state.fetchedAt ? "• " + new Date(state.fetchedAt).toLocaleTimeString() : ""}${requestBudget}`;
+  const providerBadge = document.querySelector("#providerBadge");
+  providerBadge.textContent = syncStatusText();
+  providerBadge.classList.toggle("sync-warning", ["daily_limit", "no_provider_configured", "error"].includes(state.sync?.skipped));
   renderHome(scored);
   renderDashboard(scored);
   renderCollections(scored);
@@ -847,9 +860,22 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.querySelector("#syncButton").addEventListener("click", async () => {
-  document.querySelector("#syncButton").textContent = "Syncing";
-  await loadData(true);
-  document.querySelector("#syncButton").textContent = "Sync";
+  const button = document.querySelector("#syncButton");
+  const providerBadge = document.querySelector("#providerBadge");
+  button.disabled = true;
+  button.textContent = "Syncing…";
+  providerBadge.textContent = "Sync in progress…";
+  providerBadge.classList.remove("sync-warning");
+  try {
+    await loadData(true);
+  } catch (error) {
+    state.sync = { ...(state.sync || {}), skipped: "error", lastError: error.message };
+    providerBadge.textContent = syncStatusText();
+    providerBadge.classList.add("sync-warning");
+  } finally {
+    button.disabled = false;
+    button.textContent = "Sync";
+  }
 });
 
 loadData();
