@@ -246,14 +246,7 @@ function shouldSkipProviderSync(cache, force = false) {
 function nextSyncAt(sync, cache, intervalMs = AUTO_SYNC_MS) {
   const lastSuccess = new Date(sync.lastSuccessAt || cache.fetchedAt || 0).getTime();
   const base = Number.isFinite(lastSuccess) && lastSuccess > 0 ? lastSuccess : Date.now();
-  return new Date(Math.max(base + intervalMs, Date.now())).toISOString();
-}
-
-function hasUnresolvedSyncError(sync) {
-  if (!sync.lastError) return false;
-  const lastAttempt = new Date(sync.lastAttemptAt || 0).getTime();
-  const lastSuccess = new Date(sync.lastSuccessAt || 0).getTime();
-  return !Number.isFinite(lastSuccess) || lastAttempt > lastSuccess;
+  return new Date(base + intervalMs).toISOString();
 }
 
 function providerStatus(cache) {
@@ -262,20 +255,16 @@ function providerStatus(cache) {
   const configuredProvider = MATCH_DATA_PROVIDER === "auto"
     ? (GEMINI_API_KEY && WORLD_CUP_DATA_URL ? "gemini-web" : (process.env.API_FOOTBALL_KEY ? "api-football" : "local-cache"))
     : MATCH_DATA_PROVIDER;
-  const reason = configuredProvider === "local-cache"
-    ? "no_provider_configured"
-    : (hasUnresolvedSyncError(sync) ? "error" : (decision.skip ? decision.reason : "ready"));
 
   return {
     provider: cache.provider || configuredProvider || "local",
     sourceUrl: cache.sourceUrl || WORLD_CUP_DATA_URL || null,
     fetchedAt: cache.fetchedAt || null,
     matches: Array.isArray(cache.matches) ? cache.matches.length : 0,
-    canSync: configuredProvider !== "local-cache" && !decision.skip,
-    reason,
+    canSync: !decision.skip && configuredProvider !== "local-cache",
+    reason: configuredProvider === "local-cache" ? "no_provider_configured" : (decision.skip ? decision.reason : "ready"),
     sync: {
       ...sync,
-      skipped: reason === "ready" ? undefined : reason,
       requestLimit: MATCH_SYNC_DAILY_REQUEST_LIMIT,
       nextAutoSyncAt: nextSyncAt(sync, cache),
       minSyncIntervalMs: MIN_SYNC_INTERVAL_MS

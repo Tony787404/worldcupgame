@@ -225,27 +225,15 @@ function scoreTournament() {
   return { cards, owners: ownerScores, leaderboard, events: events.sort((a, b) => b.minute - a.minute) };
 }
 
-function hasUnresolvedSyncError(sync = {}) {
-  if (!sync.lastError) return false;
-  const lastAttempt = new Date(sync.lastAttemptAt || 0).getTime();
-  const lastSuccess = new Date(sync.lastSuccessAt || 0).getTime();
-  return !Number.isFinite(lastSuccess) || lastAttempt > lastSuccess;
-}
-
-function syncState() {
-  return state.sync?.skipped || (hasUnresolvedSyncError(state.sync) ? "error" : "ready");
-}
-
 function syncStatusText() {
-  const status = syncState();
   const parts = [`${state.provider || "local"} cache`];
   if (state.fetchedAt) parts.push(new Date(state.fetchedAt).toLocaleTimeString());
   if (state.sync?.requestLimit) parts.push(`${state.sync.requests || 0}/${state.sync.requestLimit} sync calls today`);
-  if (status === "cooldown") parts.push("cooldown active");
-  if (status === "daily_limit") parts.push("daily limit reached");
-  if (status === "no_provider_configured") parts.push("provider not configured");
-  if (status === "error") parts.push("last sync failed");
-  if (status === "error" && state.sync?.lastError) parts.push(state.sync.lastError);
+  if (state.sync?.skipped === "cooldown") parts.push("cooldown active");
+  if (state.sync?.skipped === "daily_limit") parts.push("daily limit reached");
+  if (state.sync?.skipped === "no_provider_configured") parts.push("provider not configured");
+  if (state.sync?.skipped === "error") parts.push("last sync failed");
+  if (state.sync?.lastError) parts.push(state.sync.lastError);
   return parts.join(" • ");
 }
 
@@ -253,7 +241,7 @@ function render() {
   const scored = scoreTournament();
   const providerBadge = document.querySelector("#providerBadge");
   providerBadge.textContent = syncStatusText();
-  providerBadge.classList.toggle("sync-warning", ["daily_limit", "no_provider_configured", "error"].includes(syncState()));
+  providerBadge.classList.toggle("sync-warning", ["daily_limit", "no_provider_configured", "error"].includes(state.sync?.skipped));
   renderHome(scored);
   renderDashboard(scored);
   renderCollections(scored);
