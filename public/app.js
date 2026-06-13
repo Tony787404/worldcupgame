@@ -228,8 +228,7 @@ function scoreTournament() {
 function render() {
   const scored = scoreTournament();
   const requestBudget = state.sync?.requestLimit ? ` • ${state.sync.requests || 0}/${state.sync.requestLimit} sync calls today` : "";
-  const syncError = state.sync?.lastError ? ` • last sync error: ${state.sync.lastError}` : "";
-  document.querySelector("#providerBadge").textContent = `${state.provider || "local"} cache ${state.fetchedAt ? "• " + new Date(state.fetchedAt).toLocaleTimeString() : ""}${requestBudget}${syncError}`;
+  document.querySelector("#providerBadge").textContent = `${state.provider || "local"} cache ${state.fetchedAt ? "• " + new Date(state.fetchedAt).toLocaleTimeString() : ""}${requestBudget}`;
   renderHome(scored);
   renderDashboard(scored);
   renderCollections(scored);
@@ -728,7 +727,7 @@ function renderArchitecture() {
       <ul class="two-col">
         <li><strong>Framework:</strong> dependency-free Node server plus vanilla frontend for this prototype; production can move to Next.js on Vercel or Render with the same scoring model.</li>
         <li><strong>Database:</strong> SQLite or Supabase Postgres. Store owners, cards, matches, raw provider payloads, normalized events, scoring rules, scoring ledger, achievements, and weekly awards.</li>
-        <li><strong>Match data:</strong> AI webpage extraction is now the preferred low-cost path: fetch a trusted World Cup page, ask Gemini 2.5 Flash Lite to return strict match JSON, normalize it server-side, and keep API-Football as a fallback provider.</li>
+        <li><strong>Match data:</strong> AI webpage extraction is now the preferred low-cost path: fetch a trusted World Cup page, ask Gemini to return strict match JSON, normalize it server-side, and keep API-Football as a fallback provider.</li>
         <li><strong>Cost control:</strong> users read cached JSON from <code>/api/matches</code>. The Sync button and background timer share a server-side cooldown and daily call cap so Gemini/API calls stay within free-tier budgets.</li>
         <li><strong>Import plan:</strong> place the attached JSON at <code>data/ownership.json</code>, or set <code>OWNERSHIP_FILE=/path/to/file.json</code>. Normalize family members and cards once, then manage ownership in-app later.</li>
         <li><strong>Cached sync:</strong> app loads serve <code>data/cache/matches.json</code>; <code>/api/sync</code> and the scheduled timer refresh that file only when cooldown and daily-budget checks pass.</li>

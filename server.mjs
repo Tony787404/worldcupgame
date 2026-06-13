@@ -24,8 +24,8 @@ const MIN_SYNC_INTERVAL_MS = Number(process.env.MIN_SYNC_INTERVAL_MS || 60 * 60 
 const MATCH_DATA_PROVIDER = (process.env.MATCH_DATA_PROVIDER || "auto").toLowerCase();
 const MATCH_SYNC_DAILY_REQUEST_LIMIT = Number(process.env.MATCH_SYNC_DAILY_REQUEST_LIMIT || process.env.API_FOOTBALL_DAILY_REQUEST_LIMIT || 90);
 const WORLD_CUP_DATA_URL = process.env.WORLD_CUP_DATA_URL || process.env.FIFA_WORLD_CUP_DATA_URL || "";
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GEMINI_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || "";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 const WEB_EXTRACT_MAX_CHARS = Number(process.env.WEB_EXTRACT_MAX_CHARS || 120000);
 let syncTimer = null;
 
@@ -333,26 +333,12 @@ ${pageText}`;
 }
 
 async function fetchGeminiWebMatches(sync) {
-  if (!GEMINI_API_KEY) {
-    await recordSyncError(sync, "Gemini", "missing GEMINI_API_KEY");
-    throw new Error("Gemini provider is selected but GEMINI_API_KEY is not set");
-  }
-  if (!WORLD_CUP_DATA_URL) {
-    await recordSyncError(sync, "Gemini", "missing WORLD_CUP_DATA_URL");
-    throw new Error("Gemini provider is selected but WORLD_CUP_DATA_URL is not set");
-  }
+  if (!GEMINI_API_KEY || !WORLD_CUP_DATA_URL) return null;
 
   const pageResponse = await fetch(WORLD_CUP_DATA_URL, { headers: { "User-Agent": "world-cup-family-cards/1.0" } });
-  if (!pageResponse.ok) {
-    await recordSyncError(sync, "Gemini", `World Cup data page ${pageResponse.status}`);
-    throw new Error(`World Cup data page ${pageResponse.status}`);
-  }
+  if (!pageResponse.ok) throw new Error(`World Cup data page ${pageResponse.status}`);
 
   const pageText = stripHtmlForExtraction(await pageResponse.text());
-  if (!pageText) {
-    await recordSyncError(sync, "Gemini", "source page had no readable text");
-    throw new Error("World Cup data page had no readable text");
-  }
   const endpoint = new URL(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`);
   endpoint.searchParams.set("key", GEMINI_API_KEY);
   const response = await fetch(endpoint, {
@@ -380,14 +366,7 @@ async function fetchGeminiWebMatches(sync) {
   if (!text) throw new Error("Gemini returned no extractable text");
 
   const extracted = parseGeminiJson(text);
-  const matches = (extracted.matches || [])
-    .map((match, index) => normaliseProviderMatch(match, index, "gemini-web"))
-    .filter((match) => match.homeTeam && match.awayTeam);
-  if (matches.length === 0) {
-    await recordSyncError(sync, "Gemini", "extracted zero valid matches; check that WORLD_CUP_DATA_URL renders fixture text in server-side HTML");
-    throw new Error("Gemini extracted zero valid matches");
-  }
-
+  const matches = (extracted.matches || []).map((match, index) => normaliseProviderMatch(match, index, "gemini-web"));
   return {
     provider: "gemini-web",
     sourceUrl: WORLD_CUP_DATA_URL,
@@ -409,28 +388,9 @@ async function fetchGeminiWebMatches(sync) {
 async function fetchProviderMatches(sync) {
   if (MATCH_DATA_PROVIDER === "gemini-web") return fetchGeminiWebMatches(sync);
   if (MATCH_DATA_PROVIDER === "api-football") return fetchApiFootballMatches(sync);
-  if (GEMINI_API_KEY && WORLD_CUP_DATA_URL) return fetchGeminiWebMatches(sync);
-  return fetchApiFootballMatches(sync);
-}
-
-function providerStatus(cache) {
-  return {
-    configuredProvider: MATCH_DATA_PROVIDER,
-    activeProvider: GEMINI_API_KEY && WORLD_CUP_DATA_URL ? "gemini-web" : process.env.API_FOOTBALL_KEY ? "api-football" : "cache-only",
-    gemini: {
-      hasKey: Boolean(GEMINI_API_KEY),
-      hasSourceUrl: Boolean(WORLD_CUP_DATA_URL),
-      model: GEMINI_MODEL,
-      maxChars: WEB_EXTRACT_MAX_CHARS
-    },
-    apiFootball: { hasKey: Boolean(process.env.API_FOOTBALL_KEY) },
-    sync: {
-      ...resetDailySyncMeta(syncMeta(cache)),
-      requestLimit: MATCH_SYNC_DAILY_REQUEST_LIMIT,
-      minSyncIntervalMs: MIN_SYNC_INTERVAL_MS,
-      autoSyncMs: AUTO_SYNC_MS
-    }
-  };
+  return (GEMINI_API_KEY && WORLD_CUP_DATA_URL)
+    ? fetchGeminiWebMatches(sync)
+    : fetchApiFootballMatches(sync);
 }
 
 async function readMatchCache() {
@@ -453,24 +413,10 @@ async function syncMatches(force = false) {
     };
   }
 
-  try {
-    const fetched = await fetchProviderMatches(decision.sync);
-    if (!fetched) return readJson(CACHE_FILE);
-    await writeJson(CACHE_FILE, fetched);
-    return fetched;
-  } catch (error) {
-    const latest = await readJson(CACHE_FILE);
-    return {
-      ...latest,
-      sync: {
-        ...resetDailySyncMeta(syncMeta(latest)),
-        requestLimit: MATCH_SYNC_DAILY_REQUEST_LIMIT,
-        skipped: "provider_error",
-        lastError: resetDailySyncMeta(syncMeta(latest)).lastError || error.message,
-        minSyncIntervalMs: MIN_SYNC_INTERVAL_MS
-      }
-    };
-  }
+  const fetched = await fetchProviderMatches(decision.sync);
+  if (!fetched) return cached;
+  await writeJson(CACHE_FILE, fetched);
+  return fetched;
 }
 
 function json(res, body, status = 200) {
@@ -512,7 +458,7 @@ async function handler(req, res) {
       return json(res, {
         recommended: "Gemini webpage extraction with scheduled cache",
         reason: "Best fit for this family app: one cached Gemini extraction can turn a trusted World Cup page into normalized fixtures, scores, events, lineups, and player statistics while users read cached JSON.",
-        tradeOffs: "AI extraction depends on the source page exposing fixture text in server-rendered HTML and should be spot-checked. Use /api/sync/status to confirm Render sees the Gemini key, source URL, model, and last sync error."
+        tradeOffs: "AI extraction depends on the source page remaining readable and should be spot-checked, but the server-side cache cadence keeps Gemini or fallback API calls within conservative free-tier budgets."
       });
     }
 
@@ -533,7 +479,7 @@ await ensureRuntimeData();
 http.createServer(handler).listen(PORT, HOST, () => {
   console.log(`World Cup Family Cards running at http://${HOST}:${PORT}`);
   console.log(`Using data directory: ${DATA_DIR}`);
-  console.log("Set GEMINI_API_KEY + WORLD_CUP_DATA_URL for AI webpage extraction, or API_FOOTBALL_KEY for the fallback provider. Check /api/sync/status for diagnostics.");
+  console.log("Set GEMINI_API_KEY + WORLD_CUP_DATA_URL for AI webpage extraction, or API_FOOTBALL_KEY for the fallback provider.");
 });
 
 async function runScheduledSync() {

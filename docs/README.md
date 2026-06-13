@@ -37,7 +37,7 @@ GEMINI_API_KEY=your_key_here \
 node server.mjs
 ```
 
-The app serves `data/cache/matches.json` to users. The background timer and the Sync button refresh match data server-side, normalize extracted fixtures/events/lineups/player stats, and write the result back to the cache. If no Gemini or API-Football credentials are set, the app uses cached sample data so the app remains usable. The Gemini source page must expose fixture text in server-rendered HTML; pages that only populate matches in client-side JavaScript may extract zero valid matches.
+The app serves `data/cache/matches.json` to users. The background timer and the Sync button refresh match data server-side, normalize extracted fixtures/events/lineups/player stats, and write the result back to the cache. If no Gemini or API-Football credentials are set, the app uses cached sample data so the app remains usable.
 
 Provider options:
 
@@ -47,11 +47,10 @@ Provider options:
 
 Gemini settings:
 
-- `GEMINI_API_KEY`, `GEMINI_KEY`, `GOOGLE_API_KEY`, or `GOOGLE_GENERATIVE_AI_API_KEY`: server-side Gemini key.
+- `GEMINI_API_KEY` or `GOOGLE_API_KEY`: server-side Gemini key.
 - `WORLD_CUP_DATA_URL` or `FIFA_WORLD_CUP_DATA_URL`: fixture/results page to extract.
-- `GEMINI_MODEL`: model name, default `gemini-2.5-flash-lite`. The older `gemini-2.0-flash` default stopped working after Google shut down that model on June 1, 2026.
+- `GEMINI_MODEL`: model name, default `gemini-2.0-flash`.
 - `WEB_EXTRACT_MAX_CHARS`: maximum cleaned webpage text sent to Gemini, default `120000`.
-- `/api/sync/status`: diagnostic endpoint that confirms whether Render can see the key/source URL, the selected model, request budget, and the last sync error without exposing secret values.
 
 Cost-control defaults are intentionally conservative for free tiers: `AUTO_SYNC_MS` defaults to 4 hours, `MIN_SYNC_INTERVAL_MS` defaults to 1 hour for manual sync cooldowns, and `MATCH_SYNC_DAILY_REQUEST_LIMIT` defaults to 90 calls/day. The older `API_FOOTBALL_DAILY_REQUEST_LIMIT` env var is still honored as a fallback for that cap.
 
