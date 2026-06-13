@@ -225,10 +225,35 @@ function scoreTournament() {
   return { cards, owners: ownerScores, leaderboard, events: events.sort((a, b) => b.minute - a.minute) };
 }
 
+function hasUnresolvedSyncError(sync = {}) {
+  if (!sync.lastError) return false;
+  const lastAttempt = new Date(sync.lastAttemptAt || 0).getTime();
+  const lastSuccess = new Date(sync.lastSuccessAt || 0).getTime();
+  return !Number.isFinite(lastSuccess) || lastAttempt > lastSuccess;
+}
+
+function syncState() {
+  return state.sync?.skipped || (hasUnresolvedSyncError(state.sync) ? "error" : "ready");
+}
+
+function syncStatusText() {
+  const status = syncState();
+  const parts = [`${state.provider || "local"} cache`];
+  if (state.fetchedAt) parts.push(new Date(state.fetchedAt).toLocaleTimeString());
+  if (state.sync?.requestLimit) parts.push(`${state.sync.requests || 0}/${state.sync.requestLimit} sync calls today`);
+  if (status === "cooldown") parts.push("cooldown active");
+  if (status === "daily_limit") parts.push("daily limit reached");
+  if (status === "no_provider_configured") parts.push("provider not configured");
+  if (status === "error") parts.push("last sync failed");
+  if (status === "error" && state.sync?.lastError) parts.push(state.sync.lastError);
+  return parts.join(" • ");
+}
+
 function render() {
   const scored = scoreTournament();
-  const requestBudget = state.sync?.requestLimit ? ` • ${state.sync.requests || 0}/${state.sync.requestLimit} sync calls today` : "";
-  document.querySelector("#providerBadge").textContent = `${state.provider || "local"} cache ${state.fetchedAt ? "• " + new Date(state.fetchedAt).toLocaleTimeString() : ""}${requestBudget}`;
+  const providerBadge = document.querySelector("#providerBadge");
+  providerBadge.textContent = syncStatusText();
+  providerBadge.classList.toggle("sync-warning", ["daily_limit", "no_provider_configured", "error"].includes(syncState()));
   renderHome(scored);
   renderDashboard(scored);
   renderCollections(scored);
@@ -847,9 +872,22 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.querySelector("#syncButton").addEventListener("click", async () => {
-  document.querySelector("#syncButton").textContent = "Syncing";
-  await loadData(true);
-  document.querySelector("#syncButton").textContent = "Sync";
+  const button = document.querySelector("#syncButton");
+  const providerBadge = document.querySelector("#providerBadge");
+  button.disabled = true;
+  button.textContent = "Syncing…";
+  providerBadge.textContent = "Sync in progress…";
+  providerBadge.classList.remove("sync-warning");
+  try {
+    await loadData(true);
+  } catch (error) {
+    state.sync = { ...(state.sync || {}), skipped: "error", lastError: error.message };
+    providerBadge.textContent = syncStatusText();
+    providerBadge.classList.add("sync-warning");
+  } finally {
+    button.disabled = false;
+    button.textContent = "Sync";
+  }
 });
 
 loadData();
