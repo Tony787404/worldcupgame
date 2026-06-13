@@ -21,7 +21,12 @@ const API_FOOTBALL_LEAGUE_ID = process.env.API_FOOTBALL_LEAGUE_ID || "1";
 const API_FOOTBALL_SEASON = process.env.API_FOOTBALL_SEASON || "2026";
 const AUTO_SYNC_MS = Number(process.env.AUTO_SYNC_MS || 4 * 60 * 60 * 1000);
 const MIN_SYNC_INTERVAL_MS = Number(process.env.MIN_SYNC_INTERVAL_MS || 60 * 60 * 1000);
-const API_FOOTBALL_DAILY_REQUEST_LIMIT = Number(process.env.API_FOOTBALL_DAILY_REQUEST_LIMIT || 90);
+const MATCH_DATA_PROVIDER = (process.env.MATCH_DATA_PROVIDER || "auto").toLowerCase();
+const MATCH_SYNC_DAILY_REQUEST_LIMIT = Number(process.env.MATCH_SYNC_DAILY_REQUEST_LIMIT || process.env.API_FOOTBALL_DAILY_REQUEST_LIMIT || 90);
+const WORLD_CUP_DATA_URL = process.env.WORLD_CUP_DATA_URL || process.env.FIFA_WORLD_CUP_DATA_URL || "";
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GEMINI_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || "";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+const WEB_EXTRACT_MAX_CHARS = Number(process.env.WEB_EXTRACT_MAX_CHARS || 120000);
 let syncTimer = null;
 
 async function readJson(file) {
@@ -71,6 +76,57 @@ function contentType(file) {
   return "application/octet-stream";
 }
 
+function stableId(...parts) {
+  return parts
+    .filter(Boolean)
+    .join("-")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || `match-${Date.now()}`;
+}
+
+function normaliseScore(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const score = Number(value);
+  return Number.isFinite(score) ? score : null;
+}
+
+function normaliseProviderMatch(match, index = 0, source = "provider") {
+  const kickoff = match.kickoff || match.date || match.fixture?.date || null;
+  const parsedKickoff = kickoff ? new Date(kickoff) : null;
+  const validKickoff = parsedKickoff && Number.isFinite(parsedKickoff.getTime()) ? parsedKickoff : null;
+  const homeTeam = match.homeTeam || match.home_team || match.home || match.teams?.home?.name || null;
+  const awayTeam = match.awayTeam || match.away_team || match.away || match.teams?.away?.name || null;
+  const id = String(match.id || stableId(source, validKickoff?.toISOString().slice(0, 10), homeTeam, awayTeam, index));
+
+  return {
+    id,
+    kickoff: validKickoff ? validKickoff.toISOString() : null,
+    status: mapProviderState(match.status || match.state),
+    minute: Number(match.minute || 0),
+    homeTeam,
+    awayTeam,
+    homeScore: normaliseScore(match.homeScore ?? match.home_score),
+    awayScore: normaliseScore(match.awayScore ?? match.away_score),
+    events: (match.events || []).map((event, eventIndex) => ({
+      id: String(event.id || `${id}-${event.minute || 0}-${event.team || "team"}-${event.player || eventIndex}-${event.type || "event"}`),
+      minute: Number(event.minute || 0),
+      type: mapProviderEvent(event.type || event.detail),
+      team: event.team || null,
+      player: event.player || null,
+      assist: event.assist || null
+    })),
+    lineups: (match.lineups || []).map((entry) => ({
+      player: entry.player || entry.name || null,
+      team: entry.team || null,
+      position: entry.position || "Player"
+    })),
+    playerStats: match.playerStats || match.player_stats || []
+  };
+}
+
 function normaliseApiFootballFixture(item) {
   const fixture = item.fixture || {};
   const teams = item.teams || {};
@@ -84,8 +140,8 @@ function normaliseApiFootballFixture(item) {
     minute: status.elapsed || 0,
     homeTeam: teams.home?.name,
     awayTeam: teams.away?.name,
-    homeScore: Number.isFinite(goals.home) ? goals.home : null,
-    awayScore: Number.isFinite(goals.away) ? goals.away : null,
+    homeScore: normaliseScore(goals.home),
+    awayScore: normaliseScore(goals.away),
     events: (item.events || []).map((event, index) => ({
       id: String(event.id || `${fixture.id}-${event.time?.elapsed || 0}-${event.team?.id || "team"}-${event.player?.id || index}-${event.type || "event"}`),
       minute: event.time?.elapsed || event.time?.extra || 0,
@@ -110,14 +166,18 @@ function normaliseApiFootballFixture(item) {
   };
 }
 
-function mapApiFootballState(state = "") {
+function mapProviderState(state = "") {
   const key = String(state).toLowerCase();
-  if (["ft", "aet", "pen"].includes(key) || key.includes("match finished")) return "completed";
-  if (["1h", "2h", "ht", "et", "bt", "p", "int", "live"].includes(key) || key.includes("in play")) return "live";
+  if (["ft", "aet", "pen", "completed", "final"].includes(key) || key.includes("match finished") || key.includes("full time")) return "completed";
+  if (["1h", "2h", "ht", "et", "bt", "p", "int", "live", "in_progress"].includes(key) || key.includes("in play") || key.includes("half")) return "live";
   return "scheduled";
 }
 
-function mapApiFootballEvent(type = "", detail = "") {
+function mapApiFootballState(state = "") {
+  return mapProviderState(state);
+}
+
+function mapProviderEvent(type = "", detail = "") {
   const typeKey = String(type).toLowerCase();
   const detailKey = String(detail).toLowerCase();
   const key = `${typeKey} ${detailKey}`;
@@ -125,6 +185,10 @@ function mapApiFootballEvent(type = "", detail = "") {
   if (key.includes("red card")) return "red_card";
   if (typeKey.includes("goal") && !/disallowed|cancelled|missed/.test(detailKey)) return "goal";
   return String(type || detail || "event").toLowerCase().replaceAll(" ", "_");
+}
+
+function mapApiFootballEvent(type = "", detail = "") {
+  return mapProviderEvent(type, detail);
 }
 
 function hasApiFootballErrors(errors) {
@@ -155,6 +219,15 @@ async function writeSyncMetadata(patch) {
   return next;
 }
 
+async function recordSyncError(sync, provider, message) {
+  await writeSyncMetadata({
+    date: sync.date,
+    requests: sync.requests,
+    lastAttemptAt: new Date().toISOString(),
+    lastError: `${provider}: ${message}`
+  });
+}
+
 function shouldSkipProviderSync(cache, force = false) {
   const sync = resetDailySyncMeta(syncMeta(cache));
   const lastSuccess = new Date(sync.lastSuccessAt || cache.fetchedAt || 0).getTime();
@@ -163,7 +236,7 @@ function shouldSkipProviderSync(cache, force = false) {
   if (freshEnough) {
     return { skip: true, reason: "cooldown", sync };
   }
-  if (sync.requests >= API_FOOTBALL_DAILY_REQUEST_LIMIT) {
+  if (sync.requests >= MATCH_SYNC_DAILY_REQUEST_LIMIT) {
     return { skip: true, reason: "daily_limit", sync };
   }
   return { skip: false, sync };
@@ -210,13 +283,153 @@ async function fetchApiFootballMatches(sync) {
     sync: {
       date: sync.date,
       requests: nextRequests,
-      requestLimit: API_FOOTBALL_DAILY_REQUEST_LIMIT,
+      requestLimit: MATCH_SYNC_DAILY_REQUEST_LIMIT,
       lastAttemptAt: new Date().toISOString(),
       lastSuccessAt: new Date().toISOString(),
       nextAutoSyncAt: new Date(Date.now() + AUTO_SYNC_MS).toISOString(),
       minSyncIntervalMs: MIN_SYNC_INTERVAL_MS
     },
     matches: matches.sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff))
+  };
+}
+
+
+function stripHtmlForExtraction(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, WEB_EXTRACT_MAX_CHARS);
+}
+
+function parseGeminiJson(text) {
+  const trimmed = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) throw new Error("Gemini response did not contain a JSON object");
+    return JSON.parse(trimmed.slice(start, end + 1));
+  }
+}
+
+function geminiPrompt(pageText, sourceUrl) {
+  return `Extract FIFA World Cup 2026 match data from this webpage text. Return ONLY a JSON object with this shape:
+{"matches":[{"id":"stable optional id","kickoff":"ISO 8601 date/time if present, otherwise null","status":"scheduled|live|completed","minute":0,"homeTeam":"Team A","awayTeam":"Team B","homeScore":null,"awayScore":null,"events":[{"minute":0,"type":"goal|yellow_card|red_card|event","team":"Team","player":"Player","assist":null}],"lineups":[{"player":"Player","team":"Team","position":"Player"}],"playerStats":[]}]}
+Rules: use null when unknown, do not invent events or lineups, keep team/player names exactly as shown, prefer UTC or source timezone converted to ISO when available, and include all visible matches.
+Source URL: ${sourceUrl}
+Webpage text:
+${pageText}`;
+}
+
+async function fetchGeminiWebMatches(sync) {
+  if (!GEMINI_API_KEY) {
+    await recordSyncError(sync, "Gemini", "missing GEMINI_API_KEY");
+    throw new Error("Gemini provider is selected but GEMINI_API_KEY is not set");
+  }
+  if (!WORLD_CUP_DATA_URL) {
+    await recordSyncError(sync, "Gemini", "missing WORLD_CUP_DATA_URL");
+    throw new Error("Gemini provider is selected but WORLD_CUP_DATA_URL is not set");
+  }
+
+  const pageResponse = await fetch(WORLD_CUP_DATA_URL, { headers: { "User-Agent": "world-cup-family-cards/1.0" } });
+  if (!pageResponse.ok) {
+    await recordSyncError(sync, "Gemini", `World Cup data page ${pageResponse.status}`);
+    throw new Error(`World Cup data page ${pageResponse.status}`);
+  }
+
+  const pageText = stripHtmlForExtraction(await pageResponse.text());
+  if (!pageText) {
+    await recordSyncError(sync, "Gemini", "source page had no readable text");
+    throw new Error("World Cup data page had no readable text");
+  }
+  const endpoint = new URL(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`);
+  endpoint.searchParams.set("key", GEMINI_API_KEY);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: geminiPrompt(pageText, WORLD_CUP_DATA_URL) }] }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0 }
+    })
+  });
+
+  const nextRequests = sync.requests + 1;
+  if (!response.ok) {
+    await writeSyncMetadata({
+      date: sync.date,
+      requests: nextRequests,
+      lastAttemptAt: new Date().toISOString(),
+      lastError: `Gemini ${response.status}: ${(await response.text()).slice(0, 300)}`
+    });
+    throw new Error(`Gemini ${response.status}`);
+  }
+
+  const payload = await response.json();
+  const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n");
+  if (!text) throw new Error("Gemini returned no extractable text");
+
+  const extracted = parseGeminiJson(text);
+  const matches = (extracted.matches || [])
+    .map((match, index) => normaliseProviderMatch(match, index, "gemini-web"))
+    .filter((match) => match.homeTeam && match.awayTeam);
+  if (matches.length === 0) {
+    await recordSyncError(sync, "Gemini", "extracted zero valid matches; check that WORLD_CUP_DATA_URL renders fixture text in server-side HTML");
+    throw new Error("Gemini extracted zero valid matches");
+  }
+
+  return {
+    provider: "gemini-web",
+    sourceUrl: WORLD_CUP_DATA_URL,
+    model: GEMINI_MODEL,
+    fetchedAt: new Date().toISOString(),
+    sync: {
+      date: sync.date,
+      requests: nextRequests,
+      requestLimit: MATCH_SYNC_DAILY_REQUEST_LIMIT,
+      lastAttemptAt: new Date().toISOString(),
+      lastSuccessAt: new Date().toISOString(),
+      nextAutoSyncAt: new Date(Date.now() + AUTO_SYNC_MS).toISOString(),
+      minSyncIntervalMs: MIN_SYNC_INTERVAL_MS
+    },
+    matches: matches.sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff))
+  };
+}
+
+async function fetchProviderMatches(sync) {
+  if (MATCH_DATA_PROVIDER === "gemini-web") return fetchGeminiWebMatches(sync);
+  if (MATCH_DATA_PROVIDER === "api-football") return fetchApiFootballMatches(sync);
+  if (GEMINI_API_KEY && WORLD_CUP_DATA_URL) return fetchGeminiWebMatches(sync);
+  return fetchApiFootballMatches(sync);
+}
+
+function providerStatus(cache) {
+  return {
+    configuredProvider: MATCH_DATA_PROVIDER,
+    activeProvider: GEMINI_API_KEY && WORLD_CUP_DATA_URL ? "gemini-web" : process.env.API_FOOTBALL_KEY ? "api-football" : "cache-only",
+    gemini: {
+      hasKey: Boolean(GEMINI_API_KEY),
+      hasSourceUrl: Boolean(WORLD_CUP_DATA_URL),
+      model: GEMINI_MODEL,
+      maxChars: WEB_EXTRACT_MAX_CHARS
+    },
+    apiFootball: { hasKey: Boolean(process.env.API_FOOTBALL_KEY) },
+    sync: {
+      ...resetDailySyncMeta(syncMeta(cache)),
+      requestLimit: MATCH_SYNC_DAILY_REQUEST_LIMIT,
+      minSyncIntervalMs: MIN_SYNC_INTERVAL_MS,
+      autoSyncMs: AUTO_SYNC_MS
+    }
   };
 }
 
@@ -232,7 +445,7 @@ async function syncMatches(force = false) {
       ...cached,
       sync: {
         ...decision.sync,
-        requestLimit: API_FOOTBALL_DAILY_REQUEST_LIMIT,
+        requestLimit: MATCH_SYNC_DAILY_REQUEST_LIMIT,
         skipped: decision.reason,
         nextAutoSyncAt: new Date((new Date(decision.sync.lastSuccessAt || cached.fetchedAt || 0).getTime() || Date.now()) + AUTO_SYNC_MS).toISOString(),
         minSyncIntervalMs: MIN_SYNC_INTERVAL_MS
@@ -240,10 +453,24 @@ async function syncMatches(force = false) {
     };
   }
 
-  const fetched = await fetchApiFootballMatches(decision.sync);
-  if (!fetched) return cached;
-  await writeJson(CACHE_FILE, fetched);
-  return fetched;
+  try {
+    const fetched = await fetchProviderMatches(decision.sync);
+    if (!fetched) return readJson(CACHE_FILE);
+    await writeJson(CACHE_FILE, fetched);
+    return fetched;
+  } catch (error) {
+    const latest = await readJson(CACHE_FILE);
+    return {
+      ...latest,
+      sync: {
+        ...resetDailySyncMeta(syncMeta(latest)),
+        requestLimit: MATCH_SYNC_DAILY_REQUEST_LIMIT,
+        skipped: "provider_error",
+        lastError: resetDailySyncMeta(syncMeta(latest)).lastError || error.message,
+        minSyncIntervalMs: MIN_SYNC_INTERVAL_MS
+      }
+    };
+  }
 }
 
 function json(res, body, status = 200) {
@@ -257,6 +484,7 @@ async function handler(req, res) {
     if (url.pathname === "/healthz") return json(res, { ok: true, uptime: process.uptime() });
     if (url.pathname === "/api/ownership") return json(res, await readJson(OWNERSHIP_FILE));
     if (url.pathname === "/api/matches") return json(res, await readMatchCache());
+    if (url.pathname === "/api/sync/status") return json(res, providerStatus(await readMatchCache()));
     if (url.pathname === "/api/sync") return json(res, await syncMatches(true));
     if (url.pathname === "/api/player-images") {
       const ownership = await readJson(OWNERSHIP_FILE);
@@ -282,9 +510,9 @@ async function handler(req, res) {
     }
     if (url.pathname === "/api/recommendation") {
       return json(res, {
-        recommended: "API-Football with scheduled cache",
-        reason: "Best fit for this family app: one cached provider request can refresh World Cup fixtures, scores, events, lineups, and player statistics periodically while users read cached JSON.",
-        tradeOffs: "The default cache cadence is intentionally conservative to stay under 100 API requests/day. Users can press Sync for a manual refresh, but repeated syncs are rate-limited server-side."
+        recommended: "Gemini webpage extraction with scheduled cache",
+        reason: "Best fit for this family app: one cached Gemini extraction can turn a trusted World Cup page into normalized fixtures, scores, events, lineups, and player statistics while users read cached JSON.",
+        tradeOffs: "AI extraction depends on the source page exposing fixture text in server-rendered HTML and should be spot-checked. Use /api/sync/status to confirm Render sees the Gemini key, source URL, model, and last sync error."
       });
     }
 
@@ -305,7 +533,7 @@ await ensureRuntimeData();
 http.createServer(handler).listen(PORT, HOST, () => {
   console.log(`World Cup Family Cards running at http://${HOST}:${PORT}`);
   console.log(`Using data directory: ${DATA_DIR}`);
-  console.log("Set API_FOOTBALL_KEY to enable scheduled API-Football cache refreshes.");
+  console.log("Set GEMINI_API_KEY + WORLD_CUP_DATA_URL for AI webpage extraction, or API_FOOTBALL_KEY for the fallback provider. Check /api/sync/status for diagnostics.");
 });
 
 async function runScheduledSync() {

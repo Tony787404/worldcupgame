@@ -227,8 +227,9 @@ function scoreTournament() {
 
 function render() {
   const scored = scoreTournament();
-  const requestBudget = state.sync?.requestLimit ? ` • ${state.sync.requests || 0}/${state.sync.requestLimit} API req today` : "";
-  document.querySelector("#providerBadge").textContent = `${state.provider || "local"} cache ${state.fetchedAt ? "• " + new Date(state.fetchedAt).toLocaleTimeString() : ""}${requestBudget}`;
+  const requestBudget = state.sync?.requestLimit ? ` • ${state.sync.requests || 0}/${state.sync.requestLimit} sync calls today` : "";
+  const syncError = state.sync?.lastError ? ` • last sync error: ${state.sync.lastError}` : "";
+  document.querySelector("#providerBadge").textContent = `${state.provider || "local"} cache ${state.fetchedAt ? "• " + new Date(state.fetchedAt).toLocaleTimeString() : ""}${requestBudget}${syncError}`;
   renderHome(scored);
   renderDashboard(scored);
   renderCollections(scored);
@@ -727,12 +728,12 @@ function renderArchitecture() {
       <ul class="two-col">
         <li><strong>Framework:</strong> dependency-free Node server plus vanilla frontend for this prototype; production can move to Next.js on Vercel or Render with the same scoring model.</li>
         <li><strong>Database:</strong> SQLite or Supabase Postgres. Store owners, cards, matches, raw provider payloads, normalized events, scoring rules, scoring ledger, achievements, and weekly awards.</li>
-        <li><strong>Football API:</strong> API-Football via one scheduled cache request to <code>/fixtures</code> for the World Cup league/season. It can carry fixtures, scores, events, lineups, and player statistics in a provider payload that the server normalizes before writing the cache.</li>
-        <li><strong>Cost control:</strong> users read cached JSON from <code>/api/matches</code>. The Sync button and background timer share a server-side cooldown and daily request cap so the deployment stays under 100 API-Football requests/day.</li>
+        <li><strong>Match data:</strong> AI webpage extraction is now the preferred low-cost path: fetch a trusted World Cup page, ask Gemini 2.5 Flash Lite to return strict match JSON, normalize it server-side, and keep API-Football as a fallback provider.</li>
+        <li><strong>Cost control:</strong> users read cached JSON from <code>/api/matches</code>. The Sync button and background timer share a server-side cooldown and daily call cap so Gemini/API calls stay within free-tier budgets.</li>
         <li><strong>Import plan:</strong> place the attached JSON at <code>data/ownership.json</code>, or set <code>OWNERSHIP_FILE=/path/to/file.json</code>. Normalize family members and cards once, then manage ownership in-app later.</li>
         <li><strong>Cached sync:</strong> app loads serve <code>data/cache/matches.json</code>; <code>/api/sync</code> and the scheduled timer refresh that file only when cooldown and daily-budget checks pass.</li>
         <li><strong>Scoring engine:</strong> convert raw match data into normalized events, generate an append-only fantasy ledger, and derive totals from that ledger so rules can be changed and recalculated.</li>
-        <li><strong>Deployment:</strong> Render/Fly/Hetzner for the server, or Vercel plus Supabase and scheduled cron. Keep the API key server-side.</li>
+        <li><strong>Deployment:</strong> Render/Fly/Hetzner for the server, or Vercel plus Supabase and scheduled cron. Keep provider keys server-side.</li>
       </ul>
       <h2>Database schema</h2>
       <table class="table">
@@ -742,7 +743,7 @@ function renderArchitecture() {
           <tr><td>cards</td><td>Card identity, owner, category, team, player name, position.</td></tr>
           <tr><td>matches</td><td>Fixture, teams, kickoff, status, score, provider id.</td></tr>
           <tr><td>match_events</td><td>Normalized goals, assists, cards, final result, clean-sheet facts.</td></tr>
-          <tr><td>raw_api_cache</td><td>Provider payload, fetched timestamp, endpoint key, expiry.</td></tr>
+          <tr><td>raw_provider_cache</td><td>Provider payload or extracted page result, fetched timestamp, source key, expiry.</td></tr>
           <tr><td>scoring_rules</td><td>Versioned scoring values.</td></tr>
           <tr><td>fantasy_ledger</td><td>Card, owner, match, event, rule version, points.</td></tr>
           <tr><td>player_images</td><td>Canonical player/team image records, source metadata, confidence, status, manual override URL, review notes.</td></tr>
@@ -753,10 +754,10 @@ function renderArchitecture() {
       <h2>MVP implementation plan</h2>
       <ol>
         <li>Import ownership JSON and validate card names, teams, positions, and owners.</li>
-        <li>Enable <code>API_FOOTBALL_KEY</code> and verify World Cup fixture/event/lineup mapping.</li>
+        <li>Set <code>WORLD_CUP_DATA_URL</code> and <code>GEMINI_API_KEY</code>, then verify extracted fixture/event/lineup mapping against the source page.</li>
         <li>Persist normalized events and scoring ledger in SQLite or Supabase.</li>
         <li>Add admin-only ownership edits and card search.</li>
-        <li>Run scheduled cache refreshes with the 90-request/day budget and nightly recalculation.</li>
+        <li>Run scheduled cache refreshes with the daily sync budget and nightly recalculation.</li>
       </ol>
       <h2>Future roadmap</h2>
       <p>Add child-friendly card art, notification pings, in-app trades, private login, finals bracket view, player photos, team filters, historical rule versions, and shareable weekly recap images.</p>

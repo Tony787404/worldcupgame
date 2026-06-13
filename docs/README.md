@@ -26,17 +26,34 @@ See [RENDER_DEPLOYMENT.md](./RENDER_DEPLOYMENT.md) for the full deployment guide
 
 ## Live data
 
-Recommended provider: API-Football through the server-side scheduled cache.
+Recommended provider: Gemini webpage extraction through the server-side scheduled cache. Point the app at a trusted World Cup fixture/results page, then Gemini converts the visible page text into the match JSON shape the app already uses. API-Football remains available as a fallback.
 
-Set the API key before starting the server:
+Set Gemini before starting the server:
 
 ```sh
-API_FOOTBALL_KEY=your_key_here node server.mjs
+MATCH_DATA_PROVIDER=gemini-web \
+WORLD_CUP_DATA_URL=https://example.com/world-cup-fixtures \
+GEMINI_API_KEY=your_key_here \
+node server.mjs
 ```
 
-The app serves `data/cache/matches.json` to users. The background timer and the Sync button refresh API-Football data server-side, normalize the fixtures/events/lineups/player-stat payload, and write the result back to the cache. If no key is set, the app uses the cached sample data so the app remains usable.
+The app serves `data/cache/matches.json` to users. The background timer and the Sync button refresh match data server-side, normalize extracted fixtures/events/lineups/player stats, and write the result back to the cache. If no Gemini or API-Football credentials are set, the app uses cached sample data so the app remains usable. The Gemini source page must expose fixture text in server-rendered HTML; pages that only populate matches in client-side JavaScript may extract zero valid matches.
 
-Cost-control defaults are intentionally conservative for the free tier: `AUTO_SYNC_MS` defaults to 4 hours, `MIN_SYNC_INTERVAL_MS` defaults to 1 hour for manual sync cooldowns, and `API_FOOTBALL_DAILY_REQUEST_LIMIT` defaults to 90 so the app stays below 100 API requests/day.
+Provider options:
+
+- `MATCH_DATA_PROVIDER=auto` (default): use Gemini when both `GEMINI_API_KEY` and `WORLD_CUP_DATA_URL` are set; otherwise use API-Football if `API_FOOTBALL_KEY` is set.
+- `MATCH_DATA_PROVIDER=gemini-web`: require Gemini webpage extraction.
+- `MATCH_DATA_PROVIDER=api-football`: require API-Football.
+
+Gemini settings:
+
+- `GEMINI_API_KEY`, `GEMINI_KEY`, `GOOGLE_API_KEY`, or `GOOGLE_GENERATIVE_AI_API_KEY`: server-side Gemini key.
+- `WORLD_CUP_DATA_URL` or `FIFA_WORLD_CUP_DATA_URL`: fixture/results page to extract.
+- `GEMINI_MODEL`: model name, default `gemini-2.5-flash-lite`. The older `gemini-2.0-flash` default stopped working after Google shut down that model on June 1, 2026.
+- `WEB_EXTRACT_MAX_CHARS`: maximum cleaned webpage text sent to Gemini, default `120000`.
+- `/api/sync/status`: diagnostic endpoint that confirms whether Render can see the key/source URL, the selected model, request budget, and the last sync error without exposing secret values.
+
+Cost-control defaults are intentionally conservative for free tiers: `AUTO_SYNC_MS` defaults to 4 hours, `MIN_SYNC_INTERVAL_MS` defaults to 1 hour for manual sync cooldowns, and `MATCH_SYNC_DAILY_REQUEST_LIMIT` defaults to 90 calls/day. The older `API_FOOTBALL_DAILY_REQUEST_LIMIT` env var is still honored as a fallback for that cap.
 
 ## Player images
 
@@ -134,6 +151,6 @@ For the real tournament version, use the same domain model with:
 
 - Next.js or this Node server
 - SQLite for a single-family deployment, or Supabase Postgres for hosted persistence
-- API-Football World Cup fixture cache
-- Scheduled sync every 4 hours by default, manual Sync with a 1-hour cooldown, and a 90-request/day cap
+- Gemini webpage extraction or API-Football World Cup fixture cache
+- Scheduled sync every 4 hours by default, manual Sync with a 1-hour cooldown, and a 90-call/day cap
 - Event ledger scoring so the whole tournament can be recalculated after rule changes
