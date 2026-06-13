@@ -219,6 +219,15 @@ async function writeSyncMetadata(patch) {
   return next;
 }
 
+async function recordSyncError(sync, provider, message) {
+  await writeSyncMetadata({
+    date: sync.date,
+    requests: sync.requests,
+    lastAttemptAt: new Date().toISOString(),
+    lastError: `${provider}: ${message}`
+  });
+}
+
 function shouldSkipProviderSync(cache, force = false) {
   const sync = resetDailySyncMeta(syncMeta(cache));
   const lastSuccess = new Date(sync.lastSuccessAt || cache.fetchedAt || 0).getTime();
@@ -421,6 +430,7 @@ async function handler(req, res) {
     if (url.pathname === "/healthz") return json(res, { ok: true, uptime: process.uptime() });
     if (url.pathname === "/api/ownership") return json(res, await readJson(OWNERSHIP_FILE));
     if (url.pathname === "/api/matches") return json(res, await readMatchCache());
+    if (url.pathname === "/api/sync/status") return json(res, providerStatus(await readMatchCache()));
     if (url.pathname === "/api/sync") return json(res, await syncMatches(true));
     if (url.pathname === "/api/player-images") {
       const ownership = await readJson(OWNERSHIP_FILE);
