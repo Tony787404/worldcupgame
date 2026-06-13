@@ -37,6 +37,7 @@ GEMINI_API_KEY=your_key_here \
 node server.mjs
 ```
 
+The app serves `data/cache/matches.json` to users. The background timer and the Sync button refresh match data server-side, normalize extracted fixtures/events/lineups/player stats, and write the result back to the cache. If no Gemini or API-Football credentials are set, the app uses cached sample data so the app remains usable. The Gemini source page must expose fixture text in server-rendered HTML; pages that only populate matches in client-side JavaScript may extract zero valid matches.
 The app serves `data/cache/matches.json` to users. The background timer and the Sync button refresh match data server-side, normalize extracted fixtures/events/lineups/player stats, and write the result back to the cache. If no Gemini or API-Football credentials are set, the app uses cached sample data so the app remains usable.
 
 Provider options:
