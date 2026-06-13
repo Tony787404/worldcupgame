@@ -45,7 +45,7 @@ MIN_SYNC_INTERVAL_MS=3600000
 MATCH_DATA_PROVIDER=auto
 MATCH_SYNC_DAILY_REQUEST_LIMIT=90
 WORLD_CUP_DATA_URL=https://example.com/world-cup-fixtures
-GEMINI_MODEL=gemini-2.5-flash-lite
+GEMINI_MODEL=gemini-2.0-flash
 API_FOOTBALL_LEAGUE_ID=1
 API_FOOTBALL_SEASON=2026
 ```
@@ -58,7 +58,7 @@ API_FOOTBALL_KEY=...
 THESPORTSDB_API_KEY=...
 ```
 
-`GEMINI_API_KEY` plus `WORLD_CUP_DATA_URL` enables scheduled AI webpage extraction for match data. `API_FOOTBALL_KEY` is still supported as a fallback. Without either provider, the app uses cached/sample match data. After changing these Render variables, redeploy/restart the service and open `/api/sync/status` to verify Render sees `hasKey: true`, `hasSourceUrl: true`, the expected model, and any `lastError`.
+`GEMINI_API_KEY` plus `WORLD_CUP_DATA_URL` enables scheduled AI webpage extraction for match data. `API_FOOTBALL_KEY` is still supported as a fallback. Without either provider, the app uses cached/sample match data.
 
 `THESPORTSDB_API_KEY` is optional. If omitted, the image enrichment script uses TheSportsDB's public test key where available.
 
