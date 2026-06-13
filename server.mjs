@@ -463,8 +463,6 @@ async function syncMatches(force = false) {
     return fetched;
   } catch (error) {
     const updated = await writeSyncMetadata({
-      date: decision.sync.date,
-      requests: decision.sync.requests,
       lastAttemptAt: new Date().toISOString(),
       lastError: error.message
     });
