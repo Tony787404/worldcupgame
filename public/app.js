@@ -22,6 +22,7 @@ const state = {
   collectionView: "cards",
   selectedCardId: null,
   selectedMatchId: null,
+  entryMatchId: null,
   overlayCardId: null,
   imageStatus: "all"
 };
@@ -226,7 +227,7 @@ function scoreTournament() {
 }
 
 function syncStatusText() {
-  const parts = [`${state.provider || "local"} cache`];
+  const parts = [`${state.provider || "manual"} results`];
   if (state.fetchedAt) parts.push(new Date(state.fetchedAt).toLocaleTimeString());
   if (state.sync?.requestLimit) parts.push(`${state.sync.requests || 0}/${state.sync.requestLimit} sync calls today`);
   if (state.sync?.skipped === "cooldown") parts.push("cooldown active");
@@ -246,6 +247,7 @@ function render() {
   renderDashboard(scored);
   renderCollections(scored);
   renderMatches(scored);
+  renderEntry(scored);
   renderStats(scored);
   renderRecords(scored);
   renderImages(scored);
@@ -583,6 +585,132 @@ function renderMatchDetail(match, scored, ownerMap) {
     </div>`;
 }
 
+function playersForTeam(team) {
+  return state.cards
+    .filter((card) => isPlayerCard(card) && card.team === team)
+    .toSorted((a, b) => a.name.localeCompare(b.name));
+}
+
+function eventEditorRow(event = {}, index, match) {
+  const playerOptions = [...playersForTeam(match.homeTeam), ...playersForTeam(match.awayTeam)];
+  return `<div class="event-entry-row" data-event-index="${index}">
+    <input class="event-minute" type="number" min="0" max="130" value="${esc(event.minute ?? 0)}" aria-label="Minute">
+    <select class="event-type" aria-label="Event type">
+      ${[["goal", "Goal"], ["yellow_card", "Yellow card"], ["red_card", "Red card"]].map(([value, label]) => `<option value="${value}" ${event.type === value ? "selected" : ""}>${label}</option>`).join("")}
+    </select>
+    <select class="event-team" aria-label="Team">
+      ${[match.homeTeam, match.awayTeam].map((team) => `<option value="${esc(team)}" ${event.team === team ? "selected" : ""}>${esc(team)}</option>`).join("")}
+    </select>
+    <input class="event-player" list="entryPlayers-${esc(match.id)}" placeholder="Player" value="${esc(event.player || "")}" aria-label="Player">
+    <input class="event-assist" list="entryPlayers-${esc(match.id)}" placeholder="Assist (goals only)" value="${esc(event.assist || "")}" aria-label="Assist">
+    <button type="button" data-remove-event="${index}">Remove</button>
+  </div>`;
+}
+
+function renderEntry(scored) {
+  const matches = state.matches.toSorted((a, b) => (a.matchNumber || 999) - (b.matchNumber || 999));
+  if (!state.entryMatchId && matches[0]) state.entryMatchId = matches[0].id;
+  const selected = matches.find((match) => match.id === state.entryMatchId) || matches[0];
+  const completed = state.matches.filter((match) => match.status === "completed").length;
+  document.querySelector("#entry").innerHTML = `
+    <div class="toolbar">
+      <div>
+        <h2>Results Entry</h2>
+        <p class="muted">Manual scoring mode: enter match scores and fantasy events. Wins and clean sheets are calculated automatically from completed scores.</p>
+      </div>
+      <span class="pill">${completed}/${state.matches.length} completed</span>
+    </div>
+    <div class="grid">
+      <section class="panel span-5 entry-list">
+        <h3>World Cup fixtures</h3>
+        ${matches.map((match) => `<button type="button" class="entry-match ${selected?.id === match.id ? "active" : ""}" data-entry-match="${esc(match.id)}">
+          <span>#${match.matchNumber || "?"}</span>
+          <strong>${esc(match.homeTeam)} vs ${esc(match.awayTeam)}</strong>
+          <small>${esc(match.stage || "Match")} ${match.group ? `• Group ${esc(match.group)}` : ""} • ${fmtDate(match.kickoff)}</small>
+          <b>${match.status === "completed" ? `${match.homeScore ?? 0}-${match.awayScore ?? 0}` : match.status}</b>
+        </button>`).join("")}
+      </section>
+      <section class="panel span-7">
+        ${selected ? renderEntryForm(selected, scored) : `<p class="muted">No match selected.</p>`}
+      </section>
+    </div>`;
+
+  document.querySelectorAll("[data-entry-match]").forEach((button) => button.addEventListener("click", () => {
+    state.entryMatchId = button.dataset.entryMatch;
+    renderEntry(scored);
+  }));
+  wireEntryForm(selected);
+}
+
+function renderEntryForm(match, scored) {
+  const playerOptions = [...playersForTeam(match.homeTeam), ...playersForTeam(match.awayTeam)];
+  const cleanSheets = match.status === "completed" && Number.isFinite(match.homeScore) && Number.isFinite(match.awayScore)
+    ? [match.awayScore === 0 ? match.homeTeam : null, match.homeScore === 0 ? match.awayTeam : null].filter(Boolean)
+    : [];
+  return `<form id="entryForm" class="entry-form">
+    <input type="hidden" name="id" value="${esc(match.id)}">
+    <datalist id="entryPlayers-${esc(match.id)}">${playerOptions.map((card) => `<option value="${esc(card.name)}">${esc(card.team)}</option>`).join("")}</datalist>
+    <div class="match-detail-head">
+      <div><p class="eyebrow">${esc(match.stage || "Match")} ${match.group ? `• Group ${esc(match.group)}` : ""}</p><h2>${esc(match.homeTeam)} vs ${esc(match.awayTeam)}</h2><p class="muted">Match #${match.matchNumber || "?"} • ${fmtDate(match.kickoff)}</p></div>
+      <span class="points">${matchPoints(scored, match.id)} pts</span>
+    </div>
+    <div class="score-entry-grid">
+      <label>${esc(match.homeTeam)}<input name="homeScore" type="number" min="0" value="${esc(match.homeScore ?? "")}" placeholder="-"></label>
+      <label>${esc(match.awayTeam)}<input name="awayScore" type="number" min="0" value="${esc(match.awayScore ?? "")}" placeholder="-"></label>
+      <label>Status<select name="status"><option value="scheduled" ${match.status === "scheduled" ? "selected" : ""}>Scheduled</option><option value="live" ${match.status === "live" ? "selected" : ""}>Live</option><option value="completed" ${match.status === "completed" ? "selected" : ""}>Completed</option></select></label>
+      <label>Minute<input name="minute" type="number" min="0" max="130" value="${esc(match.minute || 0)}"></label>
+    </div>
+    <div class="auto-score-note"><strong>Auto bonuses:</strong> ${cleanSheets.length ? `Clean sheet: ${esc(cleanSheets.join(", "))}.` : "No clean sheet yet."} Victories are awarded to cards on the winning team when status is Completed.</div>
+    <h3>Goals and cards</h3>
+    <div id="eventEditor">${(match.events || []).map((event, index) => eventEditorRow(event, index, match)).join("") || eventEditorRow({ team: match.homeTeam, type: "goal" }, 0, match)}</div>
+    <div class="button-row"><button type="button" id="addEventButton">Add event</button><button type="submit">Save result</button></div>
+  </form>`;
+}
+
+function collectEntryEvents(form) {
+  return [...form.querySelectorAll(".event-entry-row")].map((row) => ({
+    minute: Number(row.querySelector(".event-minute").value || 0),
+    type: row.querySelector(".event-type").value,
+    team: row.querySelector(".event-team").value,
+    player: row.querySelector(".event-player").value.trim(),
+    assist: row.querySelector(".event-assist").value.trim()
+  })).filter((event) => event.player);
+}
+
+function wireEntryForm(match) {
+  const form = document.querySelector("#entryForm");
+  if (!form || !match) return;
+  document.querySelector("#addEventButton").addEventListener("click", () => {
+    const editor = document.querySelector("#eventEditor");
+    editor.insertAdjacentHTML("beforeend", eventEditorRow({ team: match.homeTeam, type: "goal" }, editor.children.length, match));
+  });
+  form.addEventListener("click", (event) => {
+    const remove = event.target.closest("[data-remove-event]");
+    if (remove) remove.closest(".event-entry-row").remove();
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector("button[type='submit']");
+    button.disabled = true;
+    button.textContent = "Saving…";
+    const body = {
+      id: form.elements.id.value,
+      homeScore: form.elements.homeScore.value,
+      awayScore: form.elements.awayScore.value,
+      status: form.elements.status.value,
+      minute: form.elements.minute.value,
+      events: collectEntryEvents(form)
+    };
+    const matches = await postJson("/api/matches/update", body);
+    state.matches = matches.matches;
+    state.provider = matches.provider;
+    state.fetchedAt = matches.fetchedAt;
+    state.sync = matches.sync || null;
+    render();
+    activateView("entry");
+  });
+}
+
 function renderStats(scored) {
   const ownerRows = scored.leaderboard.map((owner) => `<div class="stat-row"><strong>${owner.name}</strong><span class="muted">Average ${(owner.total / Math.max(1, owner.cards)).toFixed(1)} per card</span><span class="points">${owner.total}</span></div>`).join("");
   const topCards = scored.cards.toSorted((a, b) => b.points - a.points).slice(0, 8);
@@ -740,10 +868,10 @@ function renderArchitecture() {
       <ul class="two-col">
         <li><strong>Framework:</strong> dependency-free Node server plus vanilla frontend for this prototype; production can move to Next.js on Vercel or Render with the same scoring model.</li>
         <li><strong>Database:</strong> SQLite or Supabase Postgres. Store owners, cards, matches, raw provider payloads, normalized events, scoring rules, scoring ledger, achievements, and weekly awards.</li>
-        <li><strong>Match data:</strong> AI webpage extraction is now the preferred low-cost path: fetch a trusted World Cup page, ask Gemini to return strict match JSON, normalize it server-side, and keep API-Football as a fallback provider.</li>
-        <li><strong>Cost control:</strong> users read cached JSON from <code>/api/matches</code>. The Sync button and background timer share a server-side cooldown and daily call cap so Gemini/API calls stay within free-tier budgets.</li>
+        <li><strong>Match data:</strong> manual family results entry is now the preferred path. The app starts with the 104-match tournament fixture list and lets users record scores, goals, assists, yellow cards, and red cards.</li>
+        <li><strong>Scoring updates:</strong> users read cached JSON from <code>/api/matches</code>, while <code>/api/matches/update</code> persists manual entries and recalculates wins and clean sheets from completed scores.</li>
         <li><strong>Import plan:</strong> place the attached JSON at <code>data/ownership.json</code>, or set <code>OWNERSHIP_FILE=/path/to/file.json</code>. Normalize family members and cards once, then manage ownership in-app later.</li>
-        <li><strong>Cached sync:</strong> app loads serve <code>data/cache/matches.json</code>; <code>/api/sync</code> and the scheduled timer refresh that file only when cooldown and daily-budget checks pass.</li>
+        <li><strong>Manual cache:</strong> app loads serve <code>data/cache/matches.json</code>; results entry updates that file directly so family scoring does not depend on external provider quality.</li>
         <li><strong>Scoring engine:</strong> convert raw match data into normalized events, generate an append-only fantasy ledger, and derive totals from that ledger so rules can be changed and recalculated.</li>
         <li><strong>Deployment:</strong> Render/Fly/Hetzner for the server, or Vercel plus Supabase and scheduled cron. Keep provider keys server-side.</li>
       </ul>
@@ -766,7 +894,7 @@ function renderArchitecture() {
       <h2>MVP implementation plan</h2>
       <ol>
         <li>Import ownership JSON and validate card names, teams, positions, and owners.</li>
-        <li>Set <code>WORLD_CUP_DATA_URL</code> and <code>GEMINI_API_KEY</code>, then verify extracted fixture/event/lineup mapping against the source page.</li>
+        <li>Use the Results Entry tab after each match to save the final score, goals, assists, yellow cards, and red cards.</li>
         <li>Persist normalized events and scoring ledger in SQLite or Supabase.</li>
         <li>Add admin-only ownership edits and card search.</li>
         <li>Run scheduled cache refreshes with the daily sync budget and nightly recalculation.</li>
@@ -859,23 +987,25 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && state.overlayCardId) closeCardOverlay();
 });
 
-document.querySelector("#syncButton").addEventListener("click", async () => {
-  const button = document.querySelector("#syncButton");
-  const providerBadge = document.querySelector("#providerBadge");
-  button.disabled = true;
-  button.textContent = "Syncing…";
-  providerBadge.textContent = "Sync in progress…";
-  providerBadge.classList.remove("sync-warning");
-  try {
-    await loadData(true);
-  } catch (error) {
-    state.sync = { ...(state.sync || {}), skipped: "error", lastError: error.message };
-    providerBadge.textContent = syncStatusText();
-    providerBadge.classList.add("sync-warning");
-  } finally {
-    button.disabled = false;
-    button.textContent = "Sync";
-  }
-});
+const syncButton = document.querySelector("#syncButton");
+if (syncButton) {
+  syncButton.addEventListener("click", async () => {
+    const providerBadge = document.querySelector("#providerBadge");
+    syncButton.disabled = true;
+    syncButton.textContent = "Syncing…";
+    providerBadge.textContent = "Sync in progress…";
+    providerBadge.classList.remove("sync-warning");
+    try {
+      await loadData(true);
+    } catch (error) {
+      state.sync = { ...(state.sync || {}), skipped: "error", lastError: error.message };
+      providerBadge.textContent = syncStatusText();
+      providerBadge.classList.add("sync-warning");
+    } finally {
+      syncButton.disabled = false;
+      syncButton.textContent = "Sync";
+    }
+  });
+}
 
 loadData();

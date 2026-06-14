@@ -423,6 +423,55 @@ async function fetchProviderMatches(sync) {
     : fetchApiFootballMatches(sync);
 }
 
+
+function normaliseManualEvents(events, match) {
+  const allowed = new Set(["goal", "yellow_card", "red_card"]);
+  return (Array.isArray(events) ? events : [])
+    .map((event, index) => ({
+      id: String(event.id || `${match.id}-manual-${index + 1}`),
+      minute: Math.max(0, Number(event.minute || 0)),
+      type: allowed.has(event.type) ? event.type : "goal",
+      team: event.team === match.awayTeam ? match.awayTeam : match.homeTeam,
+      player: String(event.player || "").trim() || null,
+      assist: String(event.assist || "").trim() || null
+    }))
+    .filter((event) => event.player);
+}
+
+async function updateManualMatchResult(body) {
+  const cache = await readJson(CACHE_FILE);
+  const matchId = String(body.id || "");
+  const matches = Array.isArray(cache.matches) ? cache.matches : [];
+  const match = matches.find((item) => item.id === matchId);
+  if (!match) throw new Error("Match not found");
+
+  const homeScore = normaliseScore(body.homeScore);
+  const awayScore = normaliseScore(body.awayScore);
+  const hasScore = homeScore !== null && awayScore !== null;
+  const nextStatus = ["scheduled", "live", "completed"].includes(body.status)
+    ? body.status
+    : (hasScore ? "completed" : match.status || "scheduled");
+  const nextMatch = {
+    ...match,
+    status: nextStatus,
+    minute: nextStatus === "completed" ? 90 : Math.max(0, Number(body.minute || match.minute || 0)),
+    homeScore,
+    awayScore,
+    events: normaliseManualEvents(body.events, match),
+    updatedAt: new Date().toISOString(),
+    entrySource: "manual"
+  };
+
+  const nextCache = {
+    ...cache,
+    provider: "manual-entry",
+    fetchedAt: new Date().toISOString(),
+    matches: matches.map((item) => item.id === matchId ? nextMatch : item)
+  };
+  await writeJson(CACHE_FILE, nextCache);
+  return nextCache;
+}
+
 async function readMatchCache() {
   return readJson(CACHE_FILE);
 }
@@ -490,6 +539,7 @@ async function handler(req, res) {
     if (url.pathname === "/healthz") return json(res, { ok: true, uptime: process.uptime() });
     if (url.pathname === "/api/ownership") return json(res, await readJson(OWNERSHIP_FILE));
     if (url.pathname === "/api/matches") return json(res, await readMatchCache());
+    if (url.pathname === "/api/matches/update" && req.method === "POST") return json(res, await updateManualMatchResult(await readBody(req)));
     if (url.pathname === "/api/sync/status") return json(res, providerStatus(await readMatchCache()));
     if (url.pathname === "/api/sync") return json(res, await syncMatches(true));
     if (url.pathname === "/api/player-images") {
