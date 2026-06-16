@@ -1008,6 +1008,22 @@ main { padding: 0 clamp(16px, 4vw, 40px) 40px; }
   .leader-row .points, .feed-row .points, .match-row .points { grid-column: 2; justify-self: start; }
 }
 
+.import-panel code {
+  background: rgba(11, 28, 64, 0.08);
+  border-radius: 6px;
+  padding: 2px 5px;
+}
+
+.import-error {
+  margin: 12px 0 0;
+  padding: 12px;
+  border: 1px solid rgba(226, 59, 74, 0.28);
+  border-radius: 12px;
+  background: rgba(226, 59, 74, 0.08);
+  color: #8a1724;
+  font-weight: 800;
+}
+
 .entry-list {
   max-height: 72vh;
   overflow: auto;

@@ -472,6 +472,72 @@ async function updateManualMatchResult(body) {
   return nextCache;
 }
 
+
+function matchImportKey(match) {
+  return [match.homeTeam, match.awayTeam, match.kickoff ? String(match.kickoff).slice(0, 10) : match.matchNumber || ""]
+    .map((part) => String(part || "").trim().toLowerCase())
+    .join("|");
+}
+
+function normaliseImportedMatchUpdate(input, fallback, index = 0) {
+  const base = fallback || {};
+  const normalised = normaliseProviderMatch({
+    ...base,
+    ...input,
+    id: base.id || input.id || stableId("json-import", input.matchNumber || base.matchNumber, input.homeTeam || input.home_team || base.homeTeam, input.awayTeam || input.away_team || base.awayTeam, index),
+    kickoff: input.kickoff || input.date || base.kickoff,
+    homeTeam: input.homeTeam || input.home_team || input.home || base.homeTeam,
+    awayTeam: input.awayTeam || input.away_team || input.away || base.awayTeam,
+    events: input.events || base.events || [],
+    lineups: input.lineups || base.lineups || [],
+    playerStats: input.playerStats || input.player_stats || base.playerStats || []
+  }, index, "json-import");
+
+  return {
+    ...base,
+    ...normalised,
+    matchNumber: input.matchNumber ?? base.matchNumber,
+    stage: input.stage ?? base.stage,
+    group: input.group ?? base.group,
+    updatedAt: new Date().toISOString(),
+    entrySource: "json-import"
+  };
+}
+
+async function importMatchResults(body) {
+  const cache = await readJson(CACHE_FILE);
+  const existingMatches = Array.isArray(cache.matches) ? cache.matches : [];
+  const importedMatches = Array.isArray(body) ? body : (Array.isArray(body.matches) ? body.matches : []);
+  if (!importedMatches.length) throw new Error("Upload JSON must be an array of matches or an object with a matches array");
+
+  const byId = new Map(existingMatches.map((match) => [String(match.id), match]));
+  const byKey = new Map(existingMatches.map((match) => [matchImportKey(match), match]));
+  const byNumber = new Map(existingMatches.filter((match) => match.matchNumber).map((match) => [String(match.matchNumber), match]));
+  const updates = importedMatches.map((match, index) => {
+    const id = String(match.id || "");
+    const fallback = (id && byId.get(id)) || (match.matchNumber && byNumber.get(String(match.matchNumber))) || byKey.get(matchImportKey(match));
+    const next = normaliseImportedMatchUpdate(match, fallback, index);
+    return next;
+  });
+
+  const updateById = new Map(updates.map((match) => [match.id, match]));
+  const merged = [
+    ...existingMatches.map((match) => updateById.get(match.id) || match),
+    ...updates.filter((match) => !byId.has(match.id) && !existingMatches.some((existing) => matchImportKey(existing) === matchImportKey(match)))
+  ].sort((a, b) => (a.matchNumber || 9999) - (b.matchNumber || 9999) || new Date(a.kickoff || 0) - new Date(b.kickoff || 0));
+
+  const nextCache = {
+    ...cache,
+    provider: "json-import",
+    sourceUrl: body.sourceUrl || cache.sourceUrl || null,
+    fetchedAt: new Date().toISOString(),
+    importedAt: new Date().toISOString(),
+    matches: merged
+  };
+  await writeJson(CACHE_FILE, nextCache);
+  return { ...nextCache, importSummary: { imported: updates.length, total: merged.length } };
+}
+
 async function readMatchCache() {
   return readJson(CACHE_FILE);
 }
@@ -540,6 +606,7 @@ async function handler(req, res) {
     if (url.pathname === "/api/ownership") return json(res, await readJson(OWNERSHIP_FILE));
     if (url.pathname === "/api/matches") return json(res, await readMatchCache());
     if (url.pathname === "/api/matches/update" && req.method === "POST") return json(res, await updateManualMatchResult(await readBody(req)));
+    if (url.pathname === "/api/matches/import" && req.method === "POST") return json(res, await importMatchResults(await readBody(req)));
     if (url.pathname === "/api/sync/status") return json(res, providerStatus(await readMatchCache()));
     if (url.pathname === "/api/sync") return json(res, await syncMatches(true));
     if (url.pathname === "/api/player-images") {
