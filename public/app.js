@@ -25,7 +25,8 @@ const state = {
   entryMatchId: null,
   overlayCardId: null,
   imageStatus: "all",
-  importMessage: null
+  importMessage: null,
+  importError: null
 };
 
 const byId = (items) => Object.fromEntries(items.map((item) => [item.id, item]));
@@ -617,11 +618,18 @@ function renderEntry(scored) {
     <div class="toolbar">
       <div>
         <h2>Results Entry</h2>
-        <p class="muted">Manual scoring mode: enter match scores and fantasy events. Wins and clean sheets are calculated automatically from completed scores.</p>
+        <p class="muted">Upload a match-results JSON file for bulk updates, or edit one fixture manually below. Wins and clean sheets are calculated automatically from completed scores.</p>
       </div>
       <span class="pill">${completed}/${state.matches.length} completed</span>
     </div>
     <div class="grid">
+      <section class="panel span-12 import-panel">
+        <h3>Bulk JSON upload</h3>
+        <p class="muted">Upload either the full <code>/api/matches</code> JSON shape or a <code>{ "matches": [...] }</code> file. Matches are merged by id, or by home team + away team + kickoff date.</p>
+        <div class="button-row"><input id="matchImportFile" type="file" accept="application/json,.json"><button type="button" id="matchImportButton">Import JSON</button></div>
+        ${state.importMessage ? `<div class="auto-score-note">${esc(state.importMessage)}</div>` : ""}
+        ${state.importError ? `<div class="import-error">${esc(state.importError)}</div>` : ""}
+      </section>
       <section class="panel span-5 entry-list">
         <h3>World Cup fixtures</h3>
         ${matches.map((match) => `<button type="button" class="entry-match ${selected?.id === match.id ? "active" : ""}" data-entry-match="${esc(match.id)}">
@@ -640,6 +648,7 @@ function renderEntry(scored) {
     state.entryMatchId = button.dataset.entryMatch;
     renderEntry(scored);
   }));
+  wireMatchImport();
   wireEntryForm(selected);
 }
 
@@ -676,6 +685,53 @@ function collectEntryEvents(form) {
     player: row.querySelector(".event-player").value.trim(),
     assist: row.querySelector(".event-assist").value.trim()
   })).filter((event) => event.player);
+}
+
+
+function readImportFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      try {
+        resolve(JSON.parse(reader.result));
+      } catch (error) {
+        reject(new Error(`Invalid JSON: ${error.message}`));
+      }
+    });
+    reader.addEventListener("error", () => reject(new Error("Could not read the selected file")));
+    reader.readAsText(file);
+  });
+}
+
+function wireMatchImport() {
+  const button = document.querySelector("#matchImportButton");
+  const input = document.querySelector("#matchImportFile");
+  if (!button || !input) return;
+  button.addEventListener("click", async () => {
+    state.importMessage = null;
+    state.importError = null;
+    if (!input.files?.[0]) {
+      state.importError = "Choose a .json file first.";
+      renderEntry(scoreTournament());
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "Importing…";
+    try {
+      const payload = await readImportFile(input.files[0]);
+      const matches = await postJson("/api/matches/import", payload);
+      state.matches = matches.matches;
+      state.provider = matches.provider;
+      state.fetchedAt = matches.fetchedAt;
+      state.sync = matches.sync || null;
+      state.importMessage = `Imported ${matches.importSummary?.imported || 0} match update(s).`;
+      render();
+      activateView("entry");
+    } catch (error) {
+      state.importError = error.message;
+      renderEntry(scoreTournament());
+    }
+  });
 }
 
 function wireEntryForm(match) {
@@ -869,8 +925,8 @@ function renderArchitecture() {
       <ul class="two-col">
         <li><strong>Framework:</strong> dependency-free Node server plus vanilla frontend for this prototype; production can move to Next.js on Vercel or Render with the same scoring model.</li>
         <li><strong>Database:</strong> SQLite or Supabase Postgres. Store owners, cards, matches, raw provider payloads, normalized events, scoring rules, scoring ledger, achievements, and weekly awards.</li>
-        <li><strong>Match data:</strong> manual family results entry is now the preferred path. The app starts with the 104-match tournament fixture list and lets users record scores, goals, assists, yellow cards, and red cards.</li>
-        <li><strong>Scoring updates:</strong> users read cached JSON from <code>/api/matches</code>, while <code>/api/matches/update</code> persists manual entries and recalculates wins and clean sheets from completed scores.</li>
+        <li><strong>Match data:</strong> JSON match-result uploads are now the preferred path. The app starts with the 104-match tournament fixture list and lets users bulk import scores, goals, assists, yellow cards, and red cards while keeping manual edits as a fallback.</li>
+        <li><strong>Scoring updates:</strong> users read cached JSON from <code>/api/matches</code>, while <code>/api/matches/import</code> persists bulk uploads and <code>/api/matches/update</code> persists manual edits and recalculates wins and clean sheets from completed scores.</li>
         <li><strong>Import plan:</strong> place the attached JSON at <code>data/ownership.json</code>, or set <code>OWNERSHIP_FILE=/path/to/file.json</code>. Normalize family members and cards once, then manage ownership in-app later.</li>
         <li><strong>Manual cache:</strong> app loads serve <code>data/cache/matches.json</code>; results entry updates that file directly so family scoring does not depend on external provider quality.</li>
         <li><strong>Scoring engine:</strong> convert raw match data into normalized events, generate an append-only fantasy ledger, and derive totals from that ledger so rules can be changed and recalculated.</li>
