@@ -1080,31 +1080,3 @@ main { padding: 0 clamp(16px, 4vw, 40px) 40px; }
     grid-template-columns: 1fr 1fr;
   }
 }
-
-.upload-panel textarea {
-  width: 100%;
-  min-height: 280px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  font: 0.9rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  resize: vertical;
-}
-
-.button-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 36px;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
-  color: var(--ink);
-  font-weight: 800;
-  text-decoration: none;
-}
-
-.button-link:hover {
-  border-color: var(--blue);
-  box-shadow: 0 6px 16px rgba(47,109,246,0.12);
-}

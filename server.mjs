@@ -472,37 +472,6 @@ async function updateManualMatchResult(body) {
   return nextCache;
 }
 
-
-function normaliseImportedMatch(match, index = 0) {
-  const normalised = normaliseProviderMatch(match, index, "json-upload");
-  if (!normalised.homeTeam || !normalised.awayTeam) throw new Error(`Match ${index + 1} is missing homeTeam/awayTeam`);
-  return {
-    ...normalised,
-    matchNumber: Number(match.matchNumber || match.match_number || index + 1),
-    stage: match.stage || null,
-    group: match.group || null,
-    venue: match.venue || null
-  };
-}
-
-async function importMatchesJson(body) {
-  const payload = body && typeof body === "object" && body.payload ? body.payload : body;
-  const sourceMatches = Array.isArray(payload) ? payload : payload?.matches;
-  if (!Array.isArray(sourceMatches) || sourceMatches.length === 0) throw new Error("Upload JSON must be an array of matches or an object with a non-empty matches array");
-  const matches = sourceMatches.map(normaliseImportedMatch);
-  const importedAt = new Date().toISOString();
-  const nextCache = {
-    provider: "json-upload",
-    sourceUrl: payload?.sourceUrl || payload?.source || null,
-    importedAt,
-    fetchedAt: importedAt,
-    matches: matches.sort((a, b) => (a.matchNumber || 9999) - (b.matchNumber || 9999) || new Date(a.kickoff || 0) - new Date(b.kickoff || 0)),
-    sync: { date: todayKey(), requests: 0, lastAttemptAt: importedAt, lastSuccessAt: importedAt }
-  };
-  await writeJson(CACHE_FILE, nextCache);
-  return nextCache;
-}
-
 async function readMatchCache() {
   return readJson(CACHE_FILE);
 }
@@ -571,7 +540,6 @@ async function handler(req, res) {
     if (url.pathname === "/api/ownership") return json(res, await readJson(OWNERSHIP_FILE));
     if (url.pathname === "/api/matches") return json(res, await readMatchCache());
     if (url.pathname === "/api/matches/update" && req.method === "POST") return json(res, await updateManualMatchResult(await readBody(req)));
-    if (url.pathname === "/api/matches/import" && req.method === "POST") return json(res, await importMatchesJson(await readBody(req)));
     if (url.pathname === "/api/sync/status") return json(res, providerStatus(await readMatchCache()));
     if (url.pathname === "/api/sync") return json(res, await syncMatches(true));
     if (url.pathname === "/api/player-images") {

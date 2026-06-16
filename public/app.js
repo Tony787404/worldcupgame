@@ -586,98 +586,129 @@ function renderMatchDetail(match, scored, ownerMap) {
     </div>`;
 }
 
-function renderEntry() {
-  const completed = state.matches.filter((match) => match.status === "completed").length;
-  const sample = {
-    provider: "manual-json",
-    matches: [{
-      id: "match-001",
-      matchNumber: 1,
-      stage: "Group Stage",
-      group: "A",
-      kickoff: "2026-06-11T19:00:00.000Z",
-      status: "completed",
-      minute: 90,
-      homeTeam: "Mexico",
-      awayTeam: "South Africa",
-      homeScore: 2,
-      awayScore: 0,
-      events: [
-        { minute: 18, type: "goal", team: "Mexico", player: "Player Name", assist: "Assist Name" },
-        { minute: 63, type: "yellow_card", team: "South Africa", player: "Player Name" },
-        { minute: 77, type: "red_card", team: "South Africa", player: "Player Name" }
-      ],
-      lineups: [{ player: "Defender Name", team: "Mexico", position: "Defender" }]
-    }]
-  };
+function playersForTeam(team) {
+  return state.cards
+    .filter((card) => isPlayerCard(card) && card.team === team)
+    .toSorted((a, b) => a.name.localeCompare(b.name));
+}
 
+function eventEditorRow(event = {}, index, match) {
+  const playerOptions = [...playersForTeam(match.homeTeam), ...playersForTeam(match.awayTeam)];
+  return `<div class="event-entry-row" data-event-index="${index}">
+    <input class="event-minute" type="number" min="0" max="130" value="${esc(event.minute ?? 0)}" aria-label="Minute">
+    <select class="event-type" aria-label="Event type">
+      ${[["goal", "Goal"], ["yellow_card", "Yellow card"], ["red_card", "Red card"]].map(([value, label]) => `<option value="${value}" ${event.type === value ? "selected" : ""}>${label}</option>`).join("")}
+    </select>
+    <select class="event-team" aria-label="Team">
+      ${[match.homeTeam, match.awayTeam].map((team) => `<option value="${esc(team)}" ${event.team === team ? "selected" : ""}>${esc(team)}</option>`).join("")}
+    </select>
+    <input class="event-player" list="entryPlayers-${esc(match.id)}" placeholder="Player" value="${esc(event.player || "")}" aria-label="Player">
+    <input class="event-assist" list="entryPlayers-${esc(match.id)}" placeholder="Assist (goals only)" value="${esc(event.assist || "")}" aria-label="Assist">
+    <button type="button" data-remove-event="${index}">Remove</button>
+  </div>`;
+}
+
+function renderEntry(scored) {
+  const matches = state.matches.toSorted((a, b) => (a.matchNumber || 999) - (b.matchNumber || 999));
+  if (!state.entryMatchId && matches[0]) state.entryMatchId = matches[0].id;
+  const selected = matches.find((match) => match.id === state.entryMatchId) || matches[0];
+  const completed = state.matches.filter((match) => match.status === "completed").length;
   document.querySelector("#entry").innerHTML = `
     <div class="toolbar">
       <div>
-        <h2>JSON Upload</h2>
-        <p class="muted">Upload one JSON file after updating results externally. The app accepts either an array of matches or an object with a <code>matches</code> array, then recalculates victories, clean sheets, goals, assists, and card penalties from the uploaded data.</p>
+        <h2>Results Entry</h2>
+        <p class="muted">Manual scoring mode: enter match scores and fantasy events. Wins and clean sheets are calculated automatically from completed scores.</p>
       </div>
       <span class="pill">${completed}/${state.matches.length} completed</span>
     </div>
     <div class="grid">
-      <section class="panel span-6 upload-panel">
-        <h3>Import match JSON</h3>
-        ${state.importMessage ? `<p class="auto-score-note"><strong>${esc(state.importMessage)}</strong></p>` : ""}
-        <form id="jsonImportForm" class="entry-form">
-          <label>Choose JSON file<input id="matchJsonFile" type="file" accept="application/json,.json"></label>
-          <label>Or paste JSON<textarea id="matchJsonText" rows="14" spellcheck="false" placeholder='${esc(JSON.stringify(sample, null, 2))}'></textarea></label>
-          <div class="button-row"><button type="submit">Upload JSON</button><a class="button-link" href="/api/matches" target="_blank" rel="noreferrer">Download current JSON</a></div>
-        </form>
+      <section class="panel span-5 entry-list">
+        <h3>World Cup fixtures</h3>
+        ${matches.map((match) => `<button type="button" class="entry-match ${selected?.id === match.id ? "active" : ""}" data-entry-match="${esc(match.id)}">
+          <span>#${match.matchNumber || "?"}</span>
+          <strong>${esc(match.homeTeam)} vs ${esc(match.awayTeam)}</strong>
+          <small>${esc(match.stage || "Match")} ${match.group ? `• Group ${esc(match.group)}` : ""} • ${fmtDate(match.kickoff)}</small>
+          <b>${match.status === "completed" ? `${match.homeScore ?? 0}-${match.awayScore ?? 0}` : match.status}</b>
+        </button>`).join("")}
       </section>
-      <section class="panel span-6">
-        <h3>Expected fields</h3>
-        <ul class="two-col">
-          <li><strong>Required:</strong> <code>homeTeam</code>, <code>awayTeam</code>.</li>
-          <li><strong>Recommended:</strong> <code>id</code>, <code>matchNumber</code>, <code>kickoff</code>, <code>status</code>, <code>homeScore</code>, <code>awayScore</code>.</li>
-          <li><strong>Events:</strong> <code>type</code> supports <code>goal</code>, <code>yellow_card</code>, and <code>red_card</code>.</li>
-          <li><strong>Goals:</strong> include <code>player</code>, optional <code>assist</code>, <code>team</code>, and <code>minute</code>.</li>
-          <li><strong>Clean sheets:</strong> no special field needed; they are calculated from completed scores.</li>
-          <li><strong>Victories:</strong> no special field needed; they are calculated from completed scores.</li>
-        </ul>
-        <h3>Current fixture cache</h3>
-        <div class="history">
-          ${state.matches.slice(0, 10).map((match) => `<div><span>#${match.matchNumber || "?"} ${esc(match.homeTeam)} vs ${esc(match.awayTeam)}</span><strong>${esc(match.status)}</strong></div>`).join("")}
-          ${state.matches.length > 10 ? `<div><span>…and ${state.matches.length - 10} more</span><strong></strong></div>` : ""}
-        </div>
+      <section class="panel span-7">
+        ${selected ? renderEntryForm(selected, scored) : `<p class="muted">No match selected.</p>`}
       </section>
     </div>`;
-  wireJsonImportForm();
-}
-async function uploadedJsonPayload() {
-  const file = document.querySelector("#matchJsonFile")?.files?.[0];
-  const pasted = document.querySelector("#matchJsonText")?.value.trim();
-  const text = file ? await file.text() : pasted;
-  if (!text) throw new Error("Choose a JSON file or paste JSON first.");
-  return JSON.parse(text);
+
+  document.querySelectorAll("[data-entry-match]").forEach((button) => button.addEventListener("click", () => {
+    state.entryMatchId = button.dataset.entryMatch;
+    renderEntry(scored);
+  }));
+  wireEntryForm(selected);
 }
 
-function wireJsonImportForm() {
-  const form = document.querySelector("#jsonImportForm");
-  if (!form) return;
+function renderEntryForm(match, scored) {
+  const playerOptions = [...playersForTeam(match.homeTeam), ...playersForTeam(match.awayTeam)];
+  const cleanSheets = match.status === "completed" && Number.isFinite(match.homeScore) && Number.isFinite(match.awayScore)
+    ? [match.awayScore === 0 ? match.homeTeam : null, match.homeScore === 0 ? match.awayTeam : null].filter(Boolean)
+    : [];
+  return `<form id="entryForm" class="entry-form">
+    <input type="hidden" name="id" value="${esc(match.id)}">
+    <datalist id="entryPlayers-${esc(match.id)}">${playerOptions.map((card) => `<option value="${esc(card.name)}">${esc(card.team)}</option>`).join("")}</datalist>
+    <div class="match-detail-head">
+      <div><p class="eyebrow">${esc(match.stage || "Match")} ${match.group ? `• Group ${esc(match.group)}` : ""}</p><h2>${esc(match.homeTeam)} vs ${esc(match.awayTeam)}</h2><p class="muted">Match #${match.matchNumber || "?"} • ${fmtDate(match.kickoff)}</p></div>
+      <span class="points">${matchPoints(scored, match.id)} pts</span>
+    </div>
+    <div class="score-entry-grid">
+      <label>${esc(match.homeTeam)}<input name="homeScore" type="number" min="0" value="${esc(match.homeScore ?? "")}" placeholder="-"></label>
+      <label>${esc(match.awayTeam)}<input name="awayScore" type="number" min="0" value="${esc(match.awayScore ?? "")}" placeholder="-"></label>
+      <label>Status<select name="status"><option value="scheduled" ${match.status === "scheduled" ? "selected" : ""}>Scheduled</option><option value="live" ${match.status === "live" ? "selected" : ""}>Live</option><option value="completed" ${match.status === "completed" ? "selected" : ""}>Completed</option></select></label>
+      <label>Minute<input name="minute" type="number" min="0" max="130" value="${esc(match.minute || 0)}"></label>
+    </div>
+    <div class="auto-score-note"><strong>Auto bonuses:</strong> ${cleanSheets.length ? `Clean sheet: ${esc(cleanSheets.join(", "))}.` : "No clean sheet yet."} Victories are awarded to cards on the winning team when status is Completed.</div>
+    <h3>Goals and cards</h3>
+    <div id="eventEditor">${(match.events || []).map((event, index) => eventEditorRow(event, index, match)).join("") || eventEditorRow({ team: match.homeTeam, type: "goal" }, 0, match)}</div>
+    <div class="button-row"><button type="button" id="addEventButton">Add event</button><button type="submit">Save result</button></div>
+  </form>`;
+}
+
+function collectEntryEvents(form) {
+  return [...form.querySelectorAll(".event-entry-row")].map((row) => ({
+    minute: Number(row.querySelector(".event-minute").value || 0),
+    type: row.querySelector(".event-type").value,
+    team: row.querySelector(".event-team").value,
+    player: row.querySelector(".event-player").value.trim(),
+    assist: row.querySelector(".event-assist").value.trim()
+  })).filter((event) => event.player);
+}
+
+function wireEntryForm(match) {
+  const form = document.querySelector("#entryForm");
+  if (!form || !match) return;
+  document.querySelector("#addEventButton").addEventListener("click", () => {
+    const editor = document.querySelector("#eventEditor");
+    editor.insertAdjacentHTML("beforeend", eventEditorRow({ team: match.homeTeam, type: "goal" }, editor.children.length, match));
+  });
+  form.addEventListener("click", (event) => {
+    const remove = event.target.closest("[data-remove-event]");
+    if (remove) remove.closest(".event-entry-row").remove();
+  });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = form.querySelector("button[type='submit']");
     button.disabled = true;
-    button.textContent = "Uploading…";
-    try {
-      const payload = await uploadedJsonPayload();
-      const matches = await postJson("/api/matches/import", { payload });
-      state.matches = matches.matches;
-      state.provider = matches.provider;
-      state.fetchedAt = matches.fetchedAt;
-      state.sync = matches.sync || null;
-      state.importMessage = `Imported ${state.matches.length} matches.`;
-      render();
-      activateView("entry");
-    } catch (error) {
-      state.importMessage = `Import failed: ${error.message}`;
-      renderEntry();
-    }
+    button.textContent = "Saving…";
+    const body = {
+      id: form.elements.id.value,
+      homeScore: form.elements.homeScore.value,
+      awayScore: form.elements.awayScore.value,
+      status: form.elements.status.value,
+      minute: form.elements.minute.value,
+      events: collectEntryEvents(form)
+    };
+    const matches = await postJson("/api/matches/update", body);
+    state.matches = matches.matches;
+    state.provider = matches.provider;
+    state.fetchedAt = matches.fetchedAt;
+    state.sync = matches.sync || null;
+    render();
+    activateView("entry");
   });
 }
 
@@ -838,8 +869,8 @@ function renderArchitecture() {
       <ul class="two-col">
         <li><strong>Framework:</strong> dependency-free Node server plus vanilla frontend for this prototype; production can move to Next.js on Vercel or Render with the same scoring model.</li>
         <li><strong>Database:</strong> SQLite or Supabase Postgres. Store owners, cards, matches, raw provider payloads, normalized events, scoring rules, scoring ledger, achievements, and weekly awards.</li>
-        <li><strong>Match data:</strong> manual JSON upload is now the preferred path. The app starts with a fixture cache and lets users replace it with an uploaded match JSON file containing scores, goals, assists, yellow cards, and red cards.</li>
-        <li><strong>Scoring updates:</strong> users read cached JSON from <code>/api/matches</code>, while <code>/api/matches/import</code> persists uploaded JSON and recalculates wins and clean sheets from completed scores.</li>
+        <li><strong>Match data:</strong> manual family results entry is now the preferred path. The app starts with the 104-match tournament fixture list and lets users record scores, goals, assists, yellow cards, and red cards.</li>
+        <li><strong>Scoring updates:</strong> users read cached JSON from <code>/api/matches</code>, while <code>/api/matches/update</code> persists manual entries and recalculates wins and clean sheets from completed scores.</li>
         <li><strong>Import plan:</strong> place the attached JSON at <code>data/ownership.json</code>, or set <code>OWNERSHIP_FILE=/path/to/file.json</code>. Normalize family members and cards once, then manage ownership in-app later.</li>
         <li><strong>Manual cache:</strong> app loads serve <code>data/cache/matches.json</code>; results entry updates that file directly so family scoring does not depend on external provider quality.</li>
         <li><strong>Scoring engine:</strong> convert raw match data into normalized events, generate an append-only fantasy ledger, and derive totals from that ledger so rules can be changed and recalculated.</li>
@@ -864,7 +895,7 @@ function renderArchitecture() {
       <h2>MVP implementation plan</h2>
       <ol>
         <li>Import ownership JSON and validate card names, teams, positions, and owners.</li>
-        <li>Use the JSON Upload tab to import an updated match-results JSON file after matches are played.</li>
+        <li>Use the Results Entry tab after each match to save the final score, goals, assists, yellow cards, and red cards.</li>
         <li>Persist normalized events and scoring ledger in SQLite or Supabase.</li>
         <li>Add admin-only ownership edits and card search.</li>
         <li>Run scheduled cache refreshes with the daily sync budget and nightly recalculation.</li>
