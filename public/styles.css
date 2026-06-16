@@ -1007,3 +1007,104 @@ main { padding: 0 clamp(16px, 4vw, 40px) 40px; }
   .leader-row, .feed-row, .match-row, .stat-row, .card-row { grid-template-columns: auto 1fr; }
   .leader-row .points, .feed-row .points, .match-row .points { grid-column: 2; justify-self: start; }
 }
+
+.entry-list {
+  max-height: 72vh;
+  overflow: auto;
+}
+
+.entry-match {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px 12px;
+  width: 100%;
+  margin-bottom: 8px;
+  text-align: left;
+  align-items: center;
+}
+
+.entry-match small {
+  grid-column: 2 / 4;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.entry-match.active {
+  border-color: var(--blue);
+  background: #eef4ff;
+}
+
+.entry-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.entry-form input,
+.entry-form select {
+  width: 100%;
+  padding: 8px 10px;
+}
+
+.score-entry-grid,
+.event-entry-row {
+  display: grid;
+  gap: 10px;
+  align-items: end;
+}
+
+.score-entry-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 16px 0;
+}
+
+.event-entry-row {
+  grid-template-columns: 72px 140px 1fr 1fr 1fr auto;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.auto-score-note {
+  margin: 12px 0 18px;
+  padding: 12px;
+  border: 1px solid rgba(16, 166, 106, 0.22);
+  border-radius: 12px;
+  background: rgba(16, 166, 106, 0.08);
+  color: #07583b;
+}
+
+@media (max-width: 900px) {
+  .score-entry-grid,
+  .event-entry-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.upload-panel textarea {
+  width: 100%;
+  min-height: 280px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: 0.9rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  resize: vertical;
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.button-link:hover {
+  border-color: var(--blue);
+  box-shadow: 0 6px 16px rgba(47,109,246,0.12);
+}

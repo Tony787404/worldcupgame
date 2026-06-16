@@ -423,6 +423,86 @@ async function fetchProviderMatches(sync) {
     : fetchApiFootballMatches(sync);
 }
 
+
+function normaliseManualEvents(events, match) {
+  const allowed = new Set(["goal", "yellow_card", "red_card"]);
+  return (Array.isArray(events) ? events : [])
+    .map((event, index) => ({
+      id: String(event.id || `${match.id}-manual-${index + 1}`),
+      minute: Math.max(0, Number(event.minute || 0)),
+      type: allowed.has(event.type) ? event.type : "goal",
+      team: event.team === match.awayTeam ? match.awayTeam : match.homeTeam,
+      player: String(event.player || "").trim() || null,
+      assist: String(event.assist || "").trim() || null
+    }))
+    .filter((event) => event.player);
+}
+
+async function updateManualMatchResult(body) {
+  const cache = await readJson(CACHE_FILE);
+  const matchId = String(body.id || "");
+  const matches = Array.isArray(cache.matches) ? cache.matches : [];
+  const match = matches.find((item) => item.id === matchId);
+  if (!match) throw new Error("Match not found");
+
+  const homeScore = normaliseScore(body.homeScore);
+  const awayScore = normaliseScore(body.awayScore);
+  const hasScore = homeScore !== null && awayScore !== null;
+  const nextStatus = ["scheduled", "live", "completed"].includes(body.status)
+    ? body.status
+    : (hasScore ? "completed" : match.status || "scheduled");
+  const nextMatch = {
+    ...match,
+    status: nextStatus,
+    minute: nextStatus === "completed" ? 90 : Math.max(0, Number(body.minute || match.minute || 0)),
+    homeScore,
+    awayScore,
+    events: normaliseManualEvents(body.events, match),
+    updatedAt: new Date().toISOString(),
+    entrySource: "manual"
+  };
+
+  const nextCache = {
+    ...cache,
+    provider: "manual-entry",
+    fetchedAt: new Date().toISOString(),
+    matches: matches.map((item) => item.id === matchId ? nextMatch : item)
+  };
+  await writeJson(CACHE_FILE, nextCache);
+  return nextCache;
+}
+
+
+function normaliseImportedMatch(match, index = 0) {
+  const normalised = normaliseProviderMatch(match, index, "json-upload");
+  if (!normalised.homeTeam || !normalised.awayTeam) throw new Error(`Match ${index + 1} is missing homeTeam/awayTeam`);
+  return {
+    ...normalised,
+    matchNumber: Number(match.matchNumber || match.match_number || index + 1),
+    stage: match.stage || null,
+    group: match.group || null,
+    venue: match.venue || null
+  };
+}
+
+async function importMatchesJson(body) {
+  const payload = body && typeof body === "object" && body.payload ? body.payload : body;
+  const sourceMatches = Array.isArray(payload) ? payload : payload?.matches;
+  if (!Array.isArray(sourceMatches) || sourceMatches.length === 0) throw new Error("Upload JSON must be an array of matches or an object with a non-empty matches array");
+  const matches = sourceMatches.map(normaliseImportedMatch);
+  const importedAt = new Date().toISOString();
+  const nextCache = {
+    provider: "json-upload",
+    sourceUrl: payload?.sourceUrl || payload?.source || null,
+    importedAt,
+    fetchedAt: importedAt,
+    matches: matches.sort((a, b) => (a.matchNumber || 9999) - (b.matchNumber || 9999) || new Date(a.kickoff || 0) - new Date(b.kickoff || 0)),
+    sync: { date: todayKey(), requests: 0, lastAttemptAt: importedAt, lastSuccessAt: importedAt }
+  };
+  await writeJson(CACHE_FILE, nextCache);
+  return nextCache;
+}
+
 async function readMatchCache() {
   return readJson(CACHE_FILE);
 }
@@ -463,8 +543,6 @@ async function syncMatches(force = false) {
     return fetched;
   } catch (error) {
     const updated = await writeSyncMetadata({
-      date: decision.sync.date,
-      requests: decision.sync.requests,
       lastAttemptAt: new Date().toISOString(),
       lastError: error.message
     });
@@ -492,6 +570,8 @@ async function handler(req, res) {
     if (url.pathname === "/healthz") return json(res, { ok: true, uptime: process.uptime() });
     if (url.pathname === "/api/ownership") return json(res, await readJson(OWNERSHIP_FILE));
     if (url.pathname === "/api/matches") return json(res, await readMatchCache());
+    if (url.pathname === "/api/matches/update" && req.method === "POST") return json(res, await updateManualMatchResult(await readBody(req)));
+    if (url.pathname === "/api/matches/import" && req.method === "POST") return json(res, await importMatchesJson(await readBody(req)));
     if (url.pathname === "/api/sync/status") return json(res, providerStatus(await readMatchCache()));
     if (url.pathname === "/api/sync") return json(res, await syncMatches(true));
     if (url.pathname === "/api/player-images") {

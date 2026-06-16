@@ -22,8 +22,10 @@ const state = {
   collectionView: "cards",
   selectedCardId: null,
   selectedMatchId: null,
+  entryMatchId: null,
   overlayCardId: null,
-  imageStatus: "all"
+  imageStatus: "all",
+  importMessage: null
 };
 
 const byId = (items) => Object.fromEntries(items.map((item) => [item.id, item]));
@@ -226,7 +228,7 @@ function scoreTournament() {
 }
 
 function syncStatusText() {
-  const parts = [`${state.provider || "local"} cache`];
+  const parts = [`${state.provider || "manual"} results`];
   if (state.fetchedAt) parts.push(new Date(state.fetchedAt).toLocaleTimeString());
   if (state.sync?.requestLimit) parts.push(`${state.sync.requests || 0}/${state.sync.requestLimit} sync calls today`);
   if (state.sync?.skipped === "cooldown") parts.push("cooldown active");
@@ -246,6 +248,7 @@ function render() {
   renderDashboard(scored);
   renderCollections(scored);
   renderMatches(scored);
+  renderEntry(scored);
   renderStats(scored);
   renderRecords(scored);
   renderImages(scored);
@@ -583,6 +586,101 @@ function renderMatchDetail(match, scored, ownerMap) {
     </div>`;
 }
 
+function renderEntry() {
+  const completed = state.matches.filter((match) => match.status === "completed").length;
+  const sample = {
+    provider: "manual-json",
+    matches: [{
+      id: "match-001",
+      matchNumber: 1,
+      stage: "Group Stage",
+      group: "A",
+      kickoff: "2026-06-11T19:00:00.000Z",
+      status: "completed",
+      minute: 90,
+      homeTeam: "Mexico",
+      awayTeam: "South Africa",
+      homeScore: 2,
+      awayScore: 0,
+      events: [
+        { minute: 18, type: "goal", team: "Mexico", player: "Player Name", assist: "Assist Name" },
+        { minute: 63, type: "yellow_card", team: "South Africa", player: "Player Name" },
+        { minute: 77, type: "red_card", team: "South Africa", player: "Player Name" }
+      ],
+      lineups: [{ player: "Defender Name", team: "Mexico", position: "Defender" }]
+    }]
+  };
+
+  document.querySelector("#entry").innerHTML = `
+    <div class="toolbar">
+      <div>
+        <h2>JSON Upload</h2>
+        <p class="muted">Upload one JSON file after updating results externally. The app accepts either an array of matches or an object with a <code>matches</code> array, then recalculates victories, clean sheets, goals, assists, and card penalties from the uploaded data.</p>
+      </div>
+      <span class="pill">${completed}/${state.matches.length} completed</span>
+    </div>
+    <div class="grid">
+      <section class="panel span-6 upload-panel">
+        <h3>Import match JSON</h3>
+        ${state.importMessage ? `<p class="auto-score-note"><strong>${esc(state.importMessage)}</strong></p>` : ""}
+        <form id="jsonImportForm" class="entry-form">
+          <label>Choose JSON file<input id="matchJsonFile" type="file" accept="application/json,.json"></label>
+          <label>Or paste JSON<textarea id="matchJsonText" rows="14" spellcheck="false" placeholder='${esc(JSON.stringify(sample, null, 2))}'></textarea></label>
+          <div class="button-row"><button type="submit">Upload JSON</button><a class="button-link" href="/api/matches" target="_blank" rel="noreferrer">Download current JSON</a></div>
+        </form>
+      </section>
+      <section class="panel span-6">
+        <h3>Expected fields</h3>
+        <ul class="two-col">
+          <li><strong>Required:</strong> <code>homeTeam</code>, <code>awayTeam</code>.</li>
+          <li><strong>Recommended:</strong> <code>id</code>, <code>matchNumber</code>, <code>kickoff</code>, <code>status</code>, <code>homeScore</code>, <code>awayScore</code>.</li>
+          <li><strong>Events:</strong> <code>type</code> supports <code>goal</code>, <code>yellow_card</code>, and <code>red_card</code>.</li>
+          <li><strong>Goals:</strong> include <code>player</code>, optional <code>assist</code>, <code>team</code>, and <code>minute</code>.</li>
+          <li><strong>Clean sheets:</strong> no special field needed; they are calculated from completed scores.</li>
+          <li><strong>Victories:</strong> no special field needed; they are calculated from completed scores.</li>
+        </ul>
+        <h3>Current fixture cache</h3>
+        <div class="history">
+          ${state.matches.slice(0, 10).map((match) => `<div><span>#${match.matchNumber || "?"} ${esc(match.homeTeam)} vs ${esc(match.awayTeam)}</span><strong>${esc(match.status)}</strong></div>`).join("")}
+          ${state.matches.length > 10 ? `<div><span>…and ${state.matches.length - 10} more</span><strong></strong></div>` : ""}
+        </div>
+      </section>
+    </div>`;
+  wireJsonImportForm();
+}
+async function uploadedJsonPayload() {
+  const file = document.querySelector("#matchJsonFile")?.files?.[0];
+  const pasted = document.querySelector("#matchJsonText")?.value.trim();
+  const text = file ? await file.text() : pasted;
+  if (!text) throw new Error("Choose a JSON file or paste JSON first.");
+  return JSON.parse(text);
+}
+
+function wireJsonImportForm() {
+  const form = document.querySelector("#jsonImportForm");
+  if (!form) return;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector("button[type='submit']");
+    button.disabled = true;
+    button.textContent = "Uploading…";
+    try {
+      const payload = await uploadedJsonPayload();
+      const matches = await postJson("/api/matches/import", { payload });
+      state.matches = matches.matches;
+      state.provider = matches.provider;
+      state.fetchedAt = matches.fetchedAt;
+      state.sync = matches.sync || null;
+      state.importMessage = `Imported ${state.matches.length} matches.`;
+      render();
+      activateView("entry");
+    } catch (error) {
+      state.importMessage = `Import failed: ${error.message}`;
+      renderEntry();
+    }
+  });
+}
+
 function renderStats(scored) {
   const ownerRows = scored.leaderboard.map((owner) => `<div class="stat-row"><strong>${owner.name}</strong><span class="muted">Average ${(owner.total / Math.max(1, owner.cards)).toFixed(1)} per card</span><span class="points">${owner.total}</span></div>`).join("");
   const topCards = scored.cards.toSorted((a, b) => b.points - a.points).slice(0, 8);
@@ -740,10 +838,10 @@ function renderArchitecture() {
       <ul class="two-col">
         <li><strong>Framework:</strong> dependency-free Node server plus vanilla frontend for this prototype; production can move to Next.js on Vercel or Render with the same scoring model.</li>
         <li><strong>Database:</strong> SQLite or Supabase Postgres. Store owners, cards, matches, raw provider payloads, normalized events, scoring rules, scoring ledger, achievements, and weekly awards.</li>
-        <li><strong>Match data:</strong> AI webpage extraction is now the preferred low-cost path: fetch a trusted World Cup page, ask Gemini to return strict match JSON, normalize it server-side, and keep API-Football as a fallback provider.</li>
-        <li><strong>Cost control:</strong> users read cached JSON from <code>/api/matches</code>. The Sync button and background timer share a server-side cooldown and daily call cap so Gemini/API calls stay within free-tier budgets.</li>
+        <li><strong>Match data:</strong> manual JSON upload is now the preferred path. The app starts with a fixture cache and lets users replace it with an uploaded match JSON file containing scores, goals, assists, yellow cards, and red cards.</li>
+        <li><strong>Scoring updates:</strong> users read cached JSON from <code>/api/matches</code>, while <code>/api/matches/import</code> persists uploaded JSON and recalculates wins and clean sheets from completed scores.</li>
         <li><strong>Import plan:</strong> place the attached JSON at <code>data/ownership.json</code>, or set <code>OWNERSHIP_FILE=/path/to/file.json</code>. Normalize family members and cards once, then manage ownership in-app later.</li>
-        <li><strong>Cached sync:</strong> app loads serve <code>data/cache/matches.json</code>; <code>/api/sync</code> and the scheduled timer refresh that file only when cooldown and daily-budget checks pass.</li>
+        <li><strong>Manual cache:</strong> app loads serve <code>data/cache/matches.json</code>; results entry updates that file directly so family scoring does not depend on external provider quality.</li>
         <li><strong>Scoring engine:</strong> convert raw match data into normalized events, generate an append-only fantasy ledger, and derive totals from that ledger so rules can be changed and recalculated.</li>
         <li><strong>Deployment:</strong> Render/Fly/Hetzner for the server, or Vercel plus Supabase and scheduled cron. Keep provider keys server-side.</li>
       </ul>
@@ -766,7 +864,7 @@ function renderArchitecture() {
       <h2>MVP implementation plan</h2>
       <ol>
         <li>Import ownership JSON and validate card names, teams, positions, and owners.</li>
-        <li>Set <code>WORLD_CUP_DATA_URL</code> and <code>GEMINI_API_KEY</code>, then verify extracted fixture/event/lineup mapping against the source page.</li>
+        <li>Use the JSON Upload tab to import an updated match-results JSON file after matches are played.</li>
         <li>Persist normalized events and scoring ledger in SQLite or Supabase.</li>
         <li>Add admin-only ownership edits and card search.</li>
         <li>Run scheduled cache refreshes with the daily sync budget and nightly recalculation.</li>
@@ -859,23 +957,25 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && state.overlayCardId) closeCardOverlay();
 });
 
-document.querySelector("#syncButton").addEventListener("click", async () => {
-  const button = document.querySelector("#syncButton");
-  const providerBadge = document.querySelector("#providerBadge");
-  button.disabled = true;
-  button.textContent = "Syncing…";
-  providerBadge.textContent = "Sync in progress…";
-  providerBadge.classList.remove("sync-warning");
-  try {
-    await loadData(true);
-  } catch (error) {
-    state.sync = { ...(state.sync || {}), skipped: "error", lastError: error.message };
-    providerBadge.textContent = syncStatusText();
-    providerBadge.classList.add("sync-warning");
-  } finally {
-    button.disabled = false;
-    button.textContent = "Sync";
-  }
-});
+const syncButton = document.querySelector("#syncButton");
+if (syncButton) {
+  syncButton.addEventListener("click", async () => {
+    const providerBadge = document.querySelector("#providerBadge");
+    syncButton.disabled = true;
+    syncButton.textContent = "Syncing…";
+    providerBadge.textContent = "Sync in progress…";
+    providerBadge.classList.remove("sync-warning");
+    try {
+      await loadData(true);
+    } catch (error) {
+      state.sync = { ...(state.sync || {}), skipped: "error", lastError: error.message };
+      providerBadge.textContent = syncStatusText();
+      providerBadge.classList.add("sync-warning");
+    } finally {
+      syncButton.disabled = false;
+      syncButton.textContent = "Sync";
+    }
+  });
+}
 
 loadData();
