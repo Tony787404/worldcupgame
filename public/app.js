@@ -24,7 +24,8 @@ const state = {
   selectedMatchId: null,
   entryMatchId: null,
   overlayCardId: null,
-  imageStatus: "all"
+  imageStatus: "all",
+  importMessage: null
 };
 
 const byId = (items) => Object.fromEntries(items.map((item) => [item.id, item]));
